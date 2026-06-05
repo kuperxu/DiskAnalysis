@@ -1,0 +1,209 @@
+/* Disk Analysis — base styles. Dark, minimal, Apple-flavored. */
+:root {
+  color-scheme: dark;
+  font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
+  font-size: 13px;
+}
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; }
+body { background: #0f172a; color: #e2e8f0; overflow: hidden; }
+
+button {
+  font: inherit;
+  background: #1e293b;
+  color: #e2e8f0;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+button:hover { background: #334155; }
+button:disabled { opacity: 0.4; cursor: not-allowed; }
+button.primary { background: #3b82f6; border-color: #3b82f6; color: #fff; }
+button.primary:hover { background: #2563eb; }
+button.danger { background: #b91c1c; border-color: #b91c1c; color: #fff; }
+button.danger:hover { background: #991b1b; }
+
+.app {
+  display: grid;
+  grid-template-rows: 44px 1fr;
+  grid-template-columns: 240px 1fr 280px;
+  grid-template-areas:
+    "topbar topbar topbar"
+    "sidebar treemap details";
+  height: 100%;
+  -webkit-app-region: no-drag;
+}
+.topbar {
+  grid-area: topbar;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 16px 0 80px; /* leave room for traffic lights */
+  background: #1e293b;
+  border-bottom: 1px solid #0b1220;
+  -webkit-app-region: drag;
+}
+.topbar button, .topbar .breadcrumb { -webkit-app-region: no-drag; }
+.topbar .status { color: #94a3b8; font-variant-numeric: tabular-nums; }
+
+.sidebar {
+  grid-area: sidebar;
+  background: #111827;
+  border-right: 1px solid #0b1220;
+  overflow-y: auto;
+  padding: 8px;
+}
+.treemap-pane {
+  grid-area: treemap;
+  position: relative;
+  background: #0b1220;
+}
+.details {
+  grid-area: details;
+  background: #111827;
+  border-left: 1px solid #0b1220;
+  overflow-y: auto;
+  padding: 12px;
+  font-size: 12px;
+}
+
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1 1 auto;
+  overflow-x: auto;
+  white-space: nowrap;
+  scrollbar-width: thin;
+}
+.breadcrumb .seg {
+  color: #cbd5e1;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.breadcrumb .seg:hover { background: #334155; }
+.breadcrumb .seg.last { color: #fff; font-weight: 600; }
+.breadcrumb .sep { color: #475569; }
+
+.tree-row {
+  display: grid;
+  grid-template-columns: 16px 1fr auto;
+  align-items: center;
+  padding: 2px 4px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+.tree-row:hover { background: #1e293b; }
+.tree-row.active { background: #1e3a8a; }
+.tree-row .twirl { width: 16px; color: #64748b; }
+.tree-row .name {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  margin-right: 8px;
+}
+.tree-row .size { color: #94a3b8; font-size: 11px; }
+.tree-row.scanning .size::after {
+  content: ' …';
+  color: #38bdf8;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 10px;
+  background: rgba(15, 23, 42, 0.85);
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  pointer-events: none;
+}
+.legend .swatch {
+  width: 10px; height: 10px; border-radius: 2px;
+  display: inline-block; margin-right: 4px; vertical-align: middle;
+}
+
+.empty-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  height: 100%;
+  color: #64748b;
+  gap: 12px;
+}
+
+.tooltip {
+  position: absolute;
+  pointer-events: none;
+  background: rgba(15, 23, 42, 0.95);
+  border: 1px solid #334155;
+  padding: 6px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  z-index: 10;
+  max-width: 280px;
+}
+.tooltip .path { color: #94a3b8; word-break: break-all; }
+.tooltip .size { color: #fff; font-weight: 600; }
+
+.details h3 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  word-break: break-all;
+}
+.details .row {
+  display: flex;
+  justify-content: space-between;
+  padding: 2px 0;
+  color: #cbd5e1;
+}
+.details .row .k { color: #64748b; }
+
+.bar-stack {
+  display: flex;
+  height: 6px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: #0b1220;
+  margin: 6px 0 12px;
+}
+.bar-stack > div { height: 100%; }
+
+.section-title {
+  margin-top: 12px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #64748b;
+}
+
+/* Treemap rect labels */
+.cell-label {
+  pointer-events: none;
+  fill: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.6);
+}
+.cell-label.size {
+  font-weight: 400;
+  font-size: 10px;
+  fill: rgba(255,255,255,0.85);
+}
+
+.cell rect {
+  stroke: #0b1220;
+  stroke-width: 1;
+}
+.cell.scanning rect {
+  stroke: #38bdf8;
+  stroke-dasharray: 3 3;
+}
+.cell.denied rect {
+  stroke: #ef4444;
+}
