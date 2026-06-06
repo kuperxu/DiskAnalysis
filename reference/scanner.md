@@ -31,6 +31,7 @@ I/O bound 不需要 worker_threads。直接维护 N 个并发 Promise,N = `max(4
 - `lstat`(不跟符号链接),`stat.dev !== rootDev` 跳过(自动屏蔽 `/Volumes/*` 上挂的外接盘)。
 - 默认排除集合在 `tree.ts:DEFAULT_EXCLUDES`:`/System`、`/private/var/vm`、`/private/var/db`、`/.Spotlight-V100`、`/.fseventsd`、`/.DocumentRevisions-V100`、`/Volumes`。
 - 权限错误(`EACCES` / `EPERM`)→ 节点 `status: 'denied'`,treemap 标红边框,不向下扫。
+- **关闭透明 asar**:`src/main/index.ts` 顶部 `process.noAsar = true`。Electron 默认把所有 `fs.*` 在 `.asar` 路径上劫持去解析归档,对我们这种"只想 lstat 拿 size"的扫描器来说既慢又会把损坏的 asar(VSCode 测试 fixture / 一些工具仓库)打到 stderr `archive.cc Failed to parse header`。关掉后 .asar 当普通文件处理。
 
 ## 文件分类
 

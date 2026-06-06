@@ -17,6 +17,16 @@ import { CacheStore } from './cache/store'
 // at the top of the entry module.
 process.env.UV_THREADPOOL_SIZE = process.env.UV_THREADPOOL_SIZE ?? '32'
 
+// Disable Electron's transparent asar interception. By default any fs.* call
+// on a path containing ".asar" gets routed through Electron's archive parser
+// — fine for an Electron app loading its own app.asar, useless and noisy for
+// a disk scanner that just wants lstat on whatever's on disk. Without this,
+// any .asar file the user owns (VSCode/Slack/Discord all ship asars under
+// Contents/Resources/, and there are many test-fixture asars in source
+// trees) logs an "archive.cc Failed to parse header" warning and does an
+// extra read every time we touch it. Treat .asar as ordinary files.
+process.noAsar = true
+
 let mainWindow: BrowserWindow | null = null
 let scanner: ScannerController | null = null
 let cache: CacheStore | null = null
