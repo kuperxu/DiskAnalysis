@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect } from 'react'
 import { create } from 'zustand'
 import type { Notice } from '@shared/types'
 
@@ -100,18 +100,28 @@ interface ConfirmState {
  * Replaces window.confirm() which is synchronous and freezes the renderer's
  * main thread. This pumps a real React modal and resolves a Promise on
  * either action.
+ *
+ * If a second ask() lands while a previous one is still open (rapid double
+ * click, or two buttons racing), the previous Promise resolves to `false`
+ * — equivalent to the user cancelling it — so callers don't get stuck
+ * awaiting a Promise that will never settle.
  */
 export const useConfirm = create<ConfirmState>((set, get) => ({
   request: null,
   ask: (req) =>
     new Promise<boolean>((resolve) => {
+      const existing = get().request
+      if (existing) existing.resolve(false)
       set({ request: { ...req, resolve } })
     }),
   resolve: (ok) => {
     const req = get().request
     if (req) {
-      req.resolve(ok)
       set({ request: null })
+      // Resolve AFTER clearing so the next setState in caller's `.then`
+      // (e.g. setBusy(true)) sees a clean store. Microtask ordering means
+      // this still resolves on the same tick from the caller's POV.
+      req.resolve(ok)
     }
   }
 }))
@@ -119,23 +129,27 @@ export const useConfirm = create<ConfirmState>((set, get) => ({
 export function ConfirmHost(): JSX.Element | null {
   const request = useConfirm((s) => s.request)
   const resolve = useConfirm((s) => s.resolve)
-  const [mounted, setMounted] = useState(false)
 
+  // Bind keyboard shortcuts only while a modal is open. No need for a
+  // `mounted` latch — the previous version forgot to reset it on close,
+  // which caused subtle render-order bugs on repeated opens.
   useEffect(() => {
-    if (request) {
-      setMounted(true)
-      // Focus the confirm button so Enter triggers it; Escape cancels.
-      const onKey = (e: KeyboardEvent): void => {
-        if (e.key === 'Escape') resolve(false)
-        if (e.key === 'Enter') resolve(true)
+    if (!request) return
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        resolve(false)
       }
-      window.addEventListener('keydown', onKey)
-      return () => window.removeEventListener('keydown', onKey)
+      if (e.key === 'Enter') {
+        e.preventDefault()
+        resolve(true)
+      }
     }
-    return
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
   }, [request, resolve])
 
-  if (!request || !mounted) return null
+  if (!request) return null
 
   return (
     <div className="modal-backdrop" onClick={() => resolve(false)}>

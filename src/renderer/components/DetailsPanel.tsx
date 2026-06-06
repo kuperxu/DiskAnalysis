@@ -200,26 +200,47 @@ function TrashButton({
   const pushToast = useToasts((s) => s.push)
 
   const onClick = async (): Promise<void> => {
-    const ok = await ask({
-      title: `Move this ${kind} to the Trash?`,
-      body: `${formatBytes(sizeBytes)} · ${path}`,
-      confirmLabel: 'Move to Trash',
-      cancelLabel: 'Cancel',
-      danger: true
-    })
+    if (busy || disabled) return // double-click guard
+    let ok = false
+    try {
+      ok = await ask({
+        title: `Move this ${kind} to the Trash?`,
+        body: `${formatBytes(sizeBytes)} · ${path}`,
+        confirmLabel: 'Move to Trash',
+        cancelLabel: 'Cancel',
+        danger: true
+      })
+    } catch (e) {
+      // ask() shouldn't throw, but if a future change breaks it we don't
+      // want the button stuck in busy state.
+      console.error('[trash] confirm failed', e)
+      return
+    }
     if (!ok) return
     setBusy(true)
-    const res = await window.api.trash(path)
-    setBusy(false)
-    if (!res.ok) {
-      // Main side also pushes a richer notice for known error codes; this
-      // fallback covers the synchronous refusal cases (existsSync, root).
+    try {
+      const res = await window.api.trash(path)
+      if (!res.ok) {
+        // Main side also pushes a richer notice for known error codes; this
+        // fallback covers the synchronous refusal cases (existsSync, root).
+        pushToast({
+          kind: 'error',
+          title: "Couldn't move to Trash",
+          body: res.error,
+          path
+        })
+      }
+    } catch (e) {
       pushToast({
         kind: 'error',
-        title: "Couldn't move to Trash",
-        body: res.error,
+        title: 'Trash IPC failed',
+        body: (e as Error).message,
         path
       })
+    } finally {
+      // Always release the busy latch — even if IPC throws or the renderer
+      // is mid-tear-down, the button must not stay disabled.
+      setBusy(false)
     }
   }
 

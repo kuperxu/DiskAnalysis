@@ -44,6 +44,12 @@ macOS 的 `shell.trashItem` 在某些情况下不返回标准 errno,只在 messa
 - Enter 触发 confirm,Escape 触发 cancel,点击 backdrop 也是 cancel
 - 完全用 React state 驱动,主线程不阻塞 → 在等用户决策期间 toast 仍能滚入、treemap 仍能继续接收 patch
 
+### 防卡死 / race condition
+
+- **重入保护**:如果在前一个 modal 还没关闭时再调一次 `ask(...)`,前一个 Promise 立刻 resolve 为 `false`(等价于用户 cancel)。不这样的话双击触发或两个按钮抢调用会让前一个 caller 永远 `await` 一个不会 settle 的 Promise,UI 上表现为按钮 disabled 状态卡住,看起来"没响应"。
+- 调用方应当用 `try/finally` 包住 `await ask()` 和后续 IPC,确保 `busy` 等本地 state 任何情况下都能复位 — 见 `DetailsPanel.tsx:TrashButton`。
+- `ConfirmHost` 早期版本有个 `mounted` 锁,从 false → true 后从不重置,导致 modal 关闭后第二次打开有 1 帧延迟显示。已移除,直接根据 `request` 是否为 null 决定是否渲染。
+
 替换了 `DetailsPanel.tsx` 里 `Move to Trash` 的 `window.confirm`,以及 `App.tsx` 空状态里 `Scan entire disk` 的 `window.confirm`。
 
 ## 添加新通知

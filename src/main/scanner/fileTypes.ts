@@ -78,9 +78,9 @@ export const CATEGORY_COLOR: Record<FileCategory, string> = {
   audio: '#a855f7',
   archive: '#84cc16',
   code: '#22d3ee',
-  document: '#3b82f6',
+  document: '#6366f1',
   cache: '#94a3b8',
   binary: '#64748b',
   app: '#10b981',
-  other: '#cbd5e1'
+  other: '#2563eb'
 }
