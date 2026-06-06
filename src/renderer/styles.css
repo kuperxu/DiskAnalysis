@@ -26,53 +26,99 @@ button.danger:hover { background: #991b1b; }
 
 .app {
   display: grid;
+  /* Side columns shrink down to a usable minimum on narrow windows so the
+     details panel doesn't vanish off-screen. minmax(*, *fr) lets each track
+     hold its share but also fall back to a floor when space is tight. */
   grid-template-rows: 44px 1fr;
-  grid-template-columns: 240px 1fr 280px;
+  grid-template-columns:
+    minmax(180px, 240px)
+    minmax(320px, 1fr)
+    minmax(220px, 300px);
   grid-template-areas:
     "topbar topbar topbar"
     "sidebar treemap details";
   height: 100%;
+  width: 100%;
   -webkit-app-region: no-drag;
+  /* Below ~880px the side panels would crush the treemap; collapse to a
+     two-row layout (treemap on top, sidebar+details side-by-side underneath)
+     instead of letting anything overflow. */
+}
+@media (max-width: 880px) {
+  .app {
+    grid-template-rows: 44px minmax(300px, 1fr) minmax(180px, 240px);
+    grid-template-columns: 1fr 1fr;
+    grid-template-areas:
+      "topbar topbar"
+      "treemap treemap"
+      "sidebar details";
+  }
 }
 .topbar {
   grid-area: topbar;
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 0 16px 0 80px; /* leave room for traffic lights */
+  gap: 8px;
+  /* Leave room for macOS traffic lights on the left. */
+  padding: 0 12px 0 80px;
   background: #1e293b;
   border-bottom: 1px solid #0b1220;
   -webkit-app-region: drag;
+  min-width: 0;
+  overflow: hidden;
 }
-.topbar button, .topbar .breadcrumb { -webkit-app-region: no-drag; }
-.topbar .status { color: #94a3b8; font-variant-numeric: tabular-nums; }
+.topbar button, .topbar .breadcrumb, .topbar .status {
+  -webkit-app-region: no-drag;
+}
+.topbar button { flex: 0 0 auto; }
+.topbar .status {
+  flex: 0 0 auto;
+  color: #94a3b8;
+  font-variant-numeric: tabular-nums;
+  /* Hide the verbose status text on narrow windows; tooltip via title= can
+     come later. */
+  max-width: 38ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .sidebar {
   grid-area: sidebar;
   background: #111827;
   border-right: 1px solid #0b1220;
-  overflow-y: auto;
+  overflow: auto;
   padding: 8px;
+  /* Without min-width:0 a long file name inside a grid track forces the
+     track to grow, pushing the treemap and details off-screen. */
+  min-width: 0;
 }
 .treemap-pane {
   grid-area: treemap;
   position: relative;
   background: #0b1220;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 .details {
   grid-area: details;
   background: #111827;
   border-left: 1px solid #0b1220;
-  overflow-y: auto;
+  overflow: auto;
   padding: 12px;
   font-size: 12px;
+  min-width: 0;
+  /* Long paths inside .details would otherwise stretch the grid track. */
+  word-break: break-all;
 }
 
 .breadcrumb {
   display: flex;
   align-items: center;
   gap: 4px;
-  flex: 1 1 auto;
+  flex: 1 1 0;
+  min-width: 0;
   overflow-x: auto;
   white-space: nowrap;
   scrollbar-width: thin;
@@ -183,10 +229,26 @@ button.danger:hover { background: #991b1b; }
 .details .row {
   display: flex;
   justify-content: space-between;
+  gap: 8px;
   padding: 2px 0;
   color: #cbd5e1;
 }
-.details .row .k { color: #64748b; }
+.details .row .k {
+  color: #64748b;
+  flex: 0 0 auto;
+}
+.details .row > span:not(.k) {
+  text-align: right;
+  word-break: break-all;
+  min-width: 0;
+}
+.details button {
+  width: 100%;
+  text-align: center;
+  white-space: normal;
+  word-break: break-word;
+  line-height: 1.3;
+}
 
 .bar-stack {
   display: flex;

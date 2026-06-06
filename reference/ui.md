@@ -22,7 +22,9 @@ React 18 + zustand + immer + D3。三栏 grid 布局:左边目录树,中间 tree
 { tree, focusPath, selectedPath, lifecycle }
 ```
 
-- `applyPatch(patch)` 用 `produce` 修改 draft:替换 target 自身的字段,merge child stubs(已存在的只更新 size/status 不动 children)。第一条 patch 会 synthesize root 节点。
+- `applyPatch(patch)` 用 `produce` 修改 draft:替换 target 自身的字段,merge child stubs(已存在的只更新 size/status 不动 children)。
+  - **重置守卫**:如果 patch 的 path 不在当前 tree 范围内,说明用户切换了根目录(或这是首次扫描),先把 tree 清空再 synthesize。否则旧 tree 上 `locate(...)` 返 null,patch 被默默丢掉,UI 看起来"按了 Choose Folder 没反应"。
+- `setLifecycle(s)` 也带反向重置:lifecycle 携带的 `root` 和当前 `tree.path` 不一致时主动清树,这样新扫描的进度文本能立刻反映到顶栏,而不必等到第一条 patch 抵达。
 - `nodeAt(path)` 按 `/` 切片走 children map(child 键是 basename,不是全路径)。
 - `setFocus(p)` 同时清掉 `selectedPath`(从一个目录跳到另一个,前一个目录里选中的文件不应跨过去)。
 
@@ -30,10 +32,20 @@ React 18 + zustand + immer + D3。三栏 grid 布局:左边目录树,中间 tree
 
 ```
 Choose a folder to scan   (主按钮 → window.api.pickRoot → window.api.start)
-Scan entire disk          (次按钮,window.confirm 后 window.api.start('/'))
+Scan entire disk          (次按钮 → useConfirm.ask → window.api.start('/'))
 ```
 
-`Scan entire disk` 的二次确认提示用户需要 Full Disk Access、系统路径会被自动跳过。
+`Scan entire disk` 的二次确认走自定义非阻塞 modal(见 [notices.md](notices.md)),提示用户需要 Full Disk Access、系统路径会被自动跳过。
+
+## 自适应布局
+
+`.app` 是 CSS Grid:
+
+- 桌面宽度(>880px):`minmax(180,240) minmax(320,1fr) minmax(220,300)` 三列。两侧栏宽度可压缩到下限,treemap 永远拿到 320px 起步,details 永远 ≥ 220px 不会被挤出可视区。
+- 紧凑(≤880px):`@media` 切到两行布局 — treemap 顶部独占,sidebar + details 底部并排。
+- 每个 grid track 都设了 `min-width: 0`(包括 sidebar / treemap-pane / details / topbar),否则长路径会撑爆 track,把其它面板挤出窗口。
+- topbar 里 `breadcrumb` 是 `flex: 1 1 0; min-width: 0; overflow-x: auto`(收缩到 0 时变滚动),`status` 限到 38ch 配 ellipsis 防止占满。
+- details 面板按钮 `width: 100%; word-break: break-word`,长 label("Move to Trash (1.5 GB)")在窄面板里会换行而不是横向溢出。
 
 ## TreemapView
 
