@@ -14,6 +14,7 @@ React 18 + zustand + immer + D3。三栏 grid 布局:左边目录树,中间 tree
   - `Sidebar.tsx` — 可折叠目录树,按 size 降序,每层最多渲染 200 项
   - `TreemapView.tsx` — D3 squarified treemap
   - `DetailsPanel.tsx` — 目录 / 文件 / pseudo 三种视图,Show in Finder + Move to Trash 按钮
+  - `Notices.tsx` — Toast (`<ToastHost />`) + 非阻塞 confirm modal (`<ConfirmHost />`),见 [notices.md](notices.md)
 
 ## Store
 

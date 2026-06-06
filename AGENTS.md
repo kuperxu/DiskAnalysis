@@ -9,6 +9,7 @@
 - [ipc.md](reference/ipc.md) — 主进程 / 渲染进程 IPC 契约和共享类型
 - [ui.md](reference/ui.md) — 渲染层 store、treemap、各面板组件
 - [trash.md](reference/trash.md) — 异步删除流程和三态(trashing / trashed)UI
+- [notices.md](reference/notices.md) — Toast 通知 + 非阻塞确认 modal
 - [build.md](reference/build.md) — electron-vite、tsconfig、打包
 
 ## 编码规则

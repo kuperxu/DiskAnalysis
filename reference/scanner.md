@@ -49,3 +49,5 @@ I/O bound 不需要 worker_threads。直接维护 N 个并发 Promise,N = `max(4
 ## 删除入口
 
 `markTrashing(path)`、`markTrashed(path)`、`unmarkTrashing(path)`、`prune(path)` — 详见 [trash.md](trash.md)。
+
+关键性能点:`markTrashing` **O(1) on the target**,不递归子树。subtree inert 状态在 `serializeNode()` 时通过 `trashingRoots` / `trashedRoots` Set 派生;queue 里 doomed 任务在 `runTask` 开头检查跳过,而不是 O(n) heap drop。

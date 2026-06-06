@@ -23,29 +23,35 @@ done ─ click ─▶ trashing ─ shell.trashItem ok ─▶ trashed (墓碑,目
 `src/main/index.ts` 的 `IPC.trash` handler:
 
 ```
-1. 同步守卫:!fs.existsSync(p) → { ok: false, error: 'Not found' }
-                  p === scanRoot → { ok: false, error: 'Refusing to trash the scan root' }
-2. scanner.markTrashing(p)         ← 立即对树打标,广播 patch
+1. 同步守卫:!fs.existsSync(p)  → notice "Already gone" + { ok: false }
+                  p === scanRoot     → notice + refusal
+                  fs.accessSync(parent, W_OK) 失败 → 立即 notice + 返回
+                  (pre-flight 权限检查避免等 shell.trashItem 几百 ms 才报错)
+2. scanner.markTrashing(p)         ← O(1),仅 target 节点 + 加入 trashingRoots
 3. void (async () => {              ← 后台异步,不 await
      try {
        await shell.trashItem(p)
        scanner.markTrashed(p)
-       queueMicrotask(() => cache.invalidate(p))
+       setImmediate(() => cache.invalidate(p))  ← 让出主循环,不抢 patch
      } catch (e) {
        scanner.unmarkTrashing(p)
-       console.error(...)
+       notify(classifyTrashError(p, e))         ← 友好文案给 toast
      }
    })()
 4. return { ok: true }              ← 几毫秒就返回,IPC 通道不阻塞
 ```
 
+错误分类见 [notices.md](notices.md)。
+
 ## Controller API
 
 `src/main/scanner/controller.ts`:
 
-- `markTrashing(path)` — 找到节点(目录或文件),把目录子树所有 status 翻成 `trashing`,**同时从 PriorityQueue 里 drop 掉所有路径在 `path/` 下的待扫任务**(避免给注定要消失的子树继续做 I/O)。文件级:在 `parent.trashingFiles: Set<string>` 加一项。两种情况都 `emitPatch(parent.path, parent)` 让父节点的 child stub 更新到位。
-- `markTrashed(path)` — 目录:整个子树翻 `trashed`(size 不动)。文件:从 `parent.files` 摘掉,size delta 冒泡。
-- `unmarkTrashing(path)` — 目录:递归把 `'trashing'` 翻回 `'done'`(简化处理,不试图恢复到点击前的精确状态)。文件:从 `parent.trashingFiles` 移除。
+- `markTrashing(path)` — **O(1) on the target**:仅改 target 节点自己的 status,并把路径加入 `trashingRoots: Set<string>`(主进程内部状态)。**不递归子树**(之前的设计在 `~/Library` 这种几万节点的目录上会同步卡死 main 几百毫秒到几秒)。
+  - 子树的视觉 inert 状态由 `serializeNode()` 在 IPC 边界**派生**:每次序列化一个节点时,如果它本身或祖先在 `trashingRoots/trashedRoots` 里,所有 child stub 的 `status` 都被翻成 `'trashing'`/`'trashed'`。
+  - Queue 里已经入队的子树任务**不显式 drop**(避免 O(n) heapify);改在 `runTask` 开头 `isUnderTrashRoot(task.path)` 检查,doomed 任务被静默跳过。
+- `markTrashed(path)` — 目录:status 翻 `trashed`,从 `trashingRoots` 移到 `trashedRoots`。文件:从 `parent.files` 摘掉,size delta 冒泡。
+- `unmarkTrashing(path)` — 目录:status 翻回 `done`,从 `trashingRoots` 移除(此时 serializeNode 自动恢复子树外观)。文件:从 `parent.trashingFiles` 移除。
 
 ## IPC 序列化注意
 

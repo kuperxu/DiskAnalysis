@@ -81,6 +81,20 @@ export type ScanLifecycle =
   | { kind: 'done'; root: string; totalBytes: number; durationMs: number }
   | { kind: 'error'; root: string; message: string }
 
+/** A toast pushed from main → renderer. The renderer shows it in the
+ *  bottom-right corner of the window and auto-dismisses after a few seconds
+ *  (errors stick until clicked). Permission errors get a 'permission' kind
+ *  so the UI can surface a Full Disk Access hint instead of the raw errno. */
+export interface Notice {
+  kind: 'info' | 'success' | 'error' | 'permission'
+  title: string
+  body?: string
+  /** Optional path the notice is about — renderer shows it in monospace. */
+  path?: string
+  /** Stable ID so repeats coalesce. Defaults to a random uuid in main. */
+  id?: string
+}
+
 /** Channels exposed to the renderer via contextBridge. */
 export interface RendererApi {
   /** Pick a directory via the system dialog; returns the chosen path or null. */
@@ -108,11 +122,17 @@ export interface RendererApi {
   /** Reveal the path in Finder (selects it in its parent folder). */
   reveal: (path: string) => Promise<void>
 
+  /** Open an external URL (https://, x-apple.systempreferences:, …). */
+  openExternal: (url: string) => Promise<void>
+
   /** Subscribe to incremental tree patches. Returns an unsubscribe fn. */
   onPatch: (cb: (patch: TreePatch) => void) => () => void
 
   /** Subscribe to scan lifecycle changes. Returns an unsubscribe fn. */
   onLifecycle: (cb: (s: ScanLifecycle) => void) => () => void
+
+  /** Subscribe to user-visible notices (toasts). */
+  onNotice: (cb: (n: Notice) => void) => () => void
 
   /** Get current full tree (used after the renderer (re)mounts). */
   getTree: () => Promise<DirNode | null>
@@ -134,8 +154,10 @@ export const IPC = {
   focus: 'scan:focus',
   trash: 'fs:trash',
   reveal: 'fs:reveal',
+  openExternal: 'shell:openExternal',
   getTree: 'scan:getTree',
   // event -> renderer
   patch: 'scan:patch',
-  lifecycle: 'scan:lifecycle'
+  lifecycle: 'scan:lifecycle',
+  notice: 'app:notice'
 } as const

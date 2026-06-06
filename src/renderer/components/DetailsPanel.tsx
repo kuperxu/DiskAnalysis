@@ -8,6 +8,7 @@ import {
   isDirInert,
   isFileTrashing
 } from '../categories'
+import { useConfirm, useToasts } from './Notices'
 import type { DirNode, FileCategory } from '@shared/types'
 
 export function DetailsPanel(): JSX.Element {
@@ -190,23 +191,36 @@ function TrashButton({
   status: 'pending' | 'scanning' | 'done' | 'error' | 'denied' | 'trashing' | 'trashed'
   disabled: boolean
 }): JSX.Element {
-  // The "busy" state is now strictly the brief moment between confirm() and
+  // The "busy" state is now strictly the brief moment between confirm and
   // the IPC reply (which returns immediately after marking — see
   // src/main/index.ts). The actual move-to-trash runs in the background and
   // its progress is shown via node status (trashing → trashed).
   const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState<string | null>(null)
+  const ask = useConfirm((s) => s.ask)
+  const pushToast = useToasts((s) => s.push)
 
   const onClick = async (): Promise<void> => {
-    const ok = window.confirm(
-      `Move this ${kind} to the Trash?\n\n${path}\n\n${formatBytes(sizeBytes)}`
-    )
+    const ok = await ask({
+      title: `Move this ${kind} to the Trash?`,
+      body: `${formatBytes(sizeBytes)} · ${path}`,
+      confirmLabel: 'Move to Trash',
+      cancelLabel: 'Cancel',
+      danger: true
+    })
     if (!ok) return
     setBusy(true)
-    setErr(null)
     const res = await window.api.trash(path)
     setBusy(false)
-    if (!res.ok) setErr(res.error)
+    if (!res.ok) {
+      // Main side also pushes a richer notice for known error codes; this
+      // fallback covers the synchronous refusal cases (existsSync, root).
+      pushToast({
+        kind: 'error',
+        title: "Couldn't move to Trash",
+        body: res.error,
+        path
+      })
+    }
   }
 
   const label = (() => {
@@ -216,11 +230,8 @@ function TrashButton({
   })()
 
   return (
-    <>
-      <button className="danger" onClick={onClick} disabled={disabled || busy}>
-        {label}
-      </button>
-      {err && <div style={{ color: '#fca5a5', marginTop: 6 }}>Failed: {err}</div>}
-    </>
+    <button className="danger" onClick={onClick} disabled={disabled || busy}>
+      {label}
+    </button>
   )
 }

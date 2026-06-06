@@ -18,9 +18,11 @@
 | `IPC.focus` | renderer → main | 用户点击目录,boost 该子树扫描优先级 |
 | `IPC.trash` | renderer → main → renderer | 异步移到废纸篓(立即返回,见 trash.md) |
 | `IPC.reveal` | renderer → main | `shell.showItemInFolder`,失败 fallback 打开父目录 |
+| `IPC.openExternal` | renderer → main | `shell.openExternal` — https / mailto / `x-apple.systempreferences:` 等 |
 | `IPC.getTree` | renderer → main → renderer | 渲染层(重新)挂载时 hydrate 当前树 |
 | `IPC.patch` | main → renderer (event) | 增量树 patch,80ms 批 |
 | `IPC.lifecycle` | main → renderer (event) | `idle` / `scanning` / `paused` / `done` / `error` 状态 |
+| `IPC.notice` | main → renderer (event) | Toast 通知(见 notices.md) |
 
 ## DirNode 序列化
 

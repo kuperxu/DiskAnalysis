@@ -55,6 +55,16 @@ export class ScannerController extends EventEmitter {
    *  descendants discovered after the click also scan first. */
   private focusedPrefixes = new Set<string>()
 
+  /** Roots currently being trashed (status='trashing' on the node itself).
+   *  Used by the scan loop to skip queued descendants without rebuilding
+   *  the priority heap, and by IPC serialization to mark cell stubs inert
+   *  in the renderer. Cleared on markTrashed/unmarkTrashing. */
+  private trashingRoots = new Set<string>()
+  /** Roots that finished trashing (tombstones). Same lookup story as
+   *  trashingRoots but never cleared — these stay for the session so the
+   *  UI keeps showing the strike-through. */
+  private trashedRoots = new Set<string>()
+
   private startedAt = 0
   private cancelToken = 0
 
@@ -73,6 +83,8 @@ export class ScannerController extends EventEmitter {
     this.queue.clear()
     this.index.clear()
     this.focusedPrefixes.clear()
+    this.trashingRoots.clear()
+    this.trashedRoots.clear()
     this.paused = false
     this.releasePause()
     this.pauseGate = Promise.resolve()
@@ -191,28 +203,22 @@ export class ScannerController extends EventEmitter {
 
   /**
    * Optimistically mark a path as 'trashing' so the renderer can grey it out
-   * immediately. Also drops any pending scan tasks beneath it so we don't
-   * waste I/O on a doomed subtree.
+   * immediately. **Does NOT recurse into the subtree** — that used to take
+   * hundreds of ms for a large folder and stalled all IPC during deletion.
+   * Instead the renderer treats anything *under* a trashing/trashed node
+   * as inert via an ancestor lookup; see store.trashingTops / trashedTops.
    *
-   * For directory targets the status propagates down the subtree (every
-   * descendant dir node becomes inert too). For leaf-file targets we instead
-   * stash a marker on the parent so the renderer's file-rendering path knows
-   * to grey it.
-   *
-   * Returns the kind of target so callers can plan their follow-up.
+   * Pending scan tasks beneath the doomed subtree are dropped lazily: the
+   * scan loop checks `isUnderTrashedRoot(task.path)` before running each
+   * task, so tasks effectively become no-ops without a O(n) heap rebuild.
    */
   markTrashing(targetPath: string): 'dir' | 'file' | 'unknown' {
     const t = path.resolve(targetPath)
     const node = this.index.get(t)
     if (node) {
-      this.applyTrashStatus(node, 'trashing')
-      // Also drop pending scan tasks under this subtree — they are about to
-      // disappear; no point wasting threadpool slots.
-      const prefix = t.endsWith(path.sep) ? t : t + path.sep
-      this.queue.drop((task) => task.path === t || task.path.startsWith(prefix))
+      node.status = 'trashing'
+      this.trashingRoots.add(t)
       this.emitPatch(node.path, node)
-      // The parent's stub of this child needs updating in the renderer too —
-      // emitting a parent patch flushes the child stub with new status.
       const parent = this.parentOf(node)
       if (parent) this.emitPatch(parent.path, parent)
       return 'dir'
@@ -235,17 +241,19 @@ export class ScannerController extends EventEmitter {
 
   /**
    * After a successful trash:
-   *  - Directory: convert to a 'trashed' tombstone (subtree status, size kept
-   *    so the user can still see what was removed; ancestors keep counting it
-   *    in their totals to avoid jarring shrinkage). Tombstones are inert.
-   *  - File: actually remove it from the parent and bubble size deltas, since
-   *    we don't keep individual file tombstones (would clutter the treemap).
+   *  - Directory: status becomes 'trashed' (tombstone, size kept). Subtree
+   *    status doesn't need to change — renderer treats descendants as inert
+   *    via ancestor lookup.
+   *  - File: actually remove it from the parent and bubble size deltas;
+   *    we don't keep per-file tombstones (would clutter the treemap).
    */
   markTrashed(targetPath: string): void {
     const t = path.resolve(targetPath)
     const node = this.index.get(t)
     if (node) {
-      this.applyTrashStatus(node, 'trashed')
+      node.status = 'trashed'
+      this.trashingRoots.delete(t)
+      this.trashedRoots.add(t)
       this.emitPatch(node.path, node)
       const parent = this.parentOf(node)
       if (parent) this.emitPatch(parent.path, parent)
@@ -273,10 +281,8 @@ export class ScannerController extends EventEmitter {
     const t = path.resolve(targetPath)
     const node = this.index.get(t)
     if (node) {
-      // Walk subtree restoring whatever pre-trash status was — for simplicity
-      // anything not 'pending'/'scanning' becomes 'done', which matches what
-      // the user saw before they clicked.
-      this.restoreFromTrashing(node)
+      node.status = 'done'
+      this.trashingRoots.delete(t)
       this.emitPatch(node.path, node)
       const parent = this.parentOf(node)
       if (parent) this.emitPatch(parent.path, parent)
@@ -290,14 +296,16 @@ export class ScannerController extends EventEmitter {
     }
   }
 
-  private applyTrashStatus(node: DirNode, status: 'trashing' | 'trashed'): void {
-    node.status = status
-    for (const c of Object.values(node.children)) this.applyTrashStatus(c, status)
-  }
-
-  private restoreFromTrashing(node: DirNode): void {
-    if (node.status === 'trashing') node.status = 'done'
-    for (const c of Object.values(node.children)) this.restoreFromTrashing(c)
+  /** True if `p` is at or below any trashing/trashed root — used by the
+   *  scan loop to skip doomed work without rebuilding the heap. */
+  private isUnderTrashRoot(p: string): boolean {
+    for (const r of this.trashingRoots) {
+      if (p === r || p.startsWith(r + path.sep)) return true
+    }
+    for (const r of this.trashedRoots) {
+      if (p === r || p.startsWith(r + path.sep)) return true
+    }
+    return false
   }
 
   // ────────────────────────── internals ──────────────────────────
@@ -346,6 +354,10 @@ export class ScannerController extends EventEmitter {
     const generation = this.cancelToken
     const node = this.index.get(task.path)
     if (!node) return // pruned
+    // Doomed subtree: don't bother scanning. Cheap O(K) ancestor check
+    // (K = number of trashed roots), much cheaper than rebuilding the
+    // priority heap on every trash action.
+    if (this.isUnderTrashRoot(task.path)) return
 
     node.status = 'scanning'
     const result = await scanDirectory(task.path, this.rootDev)
@@ -458,8 +470,18 @@ export class ScannerController extends EventEmitter {
 
   /** Strip nested children so each patch is bounded — children are sent as
    *  shallow stubs (size + status only). The renderer tracks them separately
-   *  via their own patches. Sets are converted to arrays for IPC. */
+   *  via their own patches. Sets are converted to arrays for IPC.
+   *
+   *  If this node lives under a trashing/trashed root, its child stubs are
+   *  reported with the inherited status so the renderer doesn't have to
+   *  walk ancestors itself. */
   private serializeNode(node: DirNode): DirNode {
+    const inherited: 'trashing' | 'trashed' | null =
+      node.status === 'trashed'
+        ? 'trashed'
+        : node.status === 'trashing'
+          ? 'trashing'
+          : this.inheritedTrashStatus(node.path)
     const childStubs: Record<string, DirNode> = {}
     for (const [k, c] of Object.entries(node.children)) {
       childStubs[k] = {
@@ -468,7 +490,8 @@ export class ScannerController extends EventEmitter {
         ownSize: c.ownSize,
         children: {},
         files: [],
-        status: c.status,
+        // Descendants of a trashing/trashed root inherit the visual state.
+        status: inherited && c.status !== 'trashed' ? inherited : c.status,
         breakdown: { ...c.breakdown },
         crossDevice: c.crossDevice,
         error: c.error
@@ -488,6 +511,16 @@ export class ScannerController extends EventEmitter {
         ? Array.from(node.trashingFiles as Set<string>)
         : undefined
     }
+  }
+
+  private inheritedTrashStatus(p: string): 'trashing' | 'trashed' | null {
+    for (const r of this.trashedRoots) {
+      if (p === r || p.startsWith(r + path.sep)) return 'trashed'
+    }
+    for (const r of this.trashingRoots) {
+      if (p === r || p.startsWith(r + path.sep)) return 'trashing'
+    }
+    return null
   }
 
   private emitLifecycle(s: ScanLifecycle): void {
