@@ -4,7 +4,9 @@ import {
   CATEGORY_COLOR,
   CATEGORY_LABEL,
   CATEGORY_ORDER,
-  formatBytes
+  formatBytes,
+  isDirInert,
+  isFileTrashing
 } from '../categories'
 import type { DirNode, FileCategory } from '@shared/types'
 
@@ -32,7 +34,13 @@ export function DetailsPanel(): JSX.Element {
   })()
 
   if (fileSelected && selectedPath) {
-    return <FileInfo path={selectedPath} file={fileSelected} />
+    return (
+      <FileInfo
+        path={selectedPath}
+        file={fileSelected}
+        isTrashing={isFileTrashing(focused?.trashingFiles, fileSelected.name)}
+      />
+    )
   }
 
   // Otherwise show directory info for the focused node.
@@ -43,6 +51,7 @@ export function DetailsPanel(): JSX.Element {
 
 function DirInfo({ node }: { node: DirNode }): JSX.Element {
   const total = Math.max(1, node.size)
+  const inert = isDirInert(node.status)
   return (
     <>
       <h3 title={node.path}>{node.path}</h3>
@@ -90,18 +99,35 @@ function DirInfo({ node }: { node: DirNode }): JSX.Element {
 
       <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 6 }}>
         <RevealButton path={node.path} />
-        <TrashButton path={node.path} sizeBytes={node.size} kind="folder" />
+        <TrashButton
+          path={node.path}
+          sizeBytes={node.size}
+          kind="folder"
+          status={node.status}
+          disabled={inert}
+        />
       </div>
     </>
   )
 }
 
-function FileInfo({ path, file }: { path: string; file: { name: string; size: number; category: FileCategory } }): JSX.Element {
+function FileInfo({
+  path,
+  file,
+  isTrashing
+}: {
+  path: string
+  file: { name: string; size: number; category: FileCategory }
+  isTrashing: boolean
+}): JSX.Element {
   return (
     <>
       <h3 title={path}>{file.name}</h3>
       <div className="row"><span className="k">Path</span><span style={{ wordBreak: 'break-all', textAlign: 'right' }}>{path}</span></div>
       <div className="row"><span className="k">Size</span><span>{formatBytes(file.size)}</span></div>
+      {isTrashing && (
+        <div className="row"><span className="k">Status</span><span style={{ color: '#f87171' }}>trashing…</span></div>
+      )}
       <div className="row">
         <span className="k">Category</span>
         <span>
@@ -120,7 +146,13 @@ function FileInfo({ path, file }: { path: string; file: { name: string; size: nu
       </div>
       <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 6 }}>
         <RevealButton path={path} />
-        <TrashButton path={path} sizeBytes={file.size} kind="file" />
+        <TrashButton
+          path={path}
+          sizeBytes={file.size}
+          kind="file"
+          status={isTrashing ? 'trashing' : 'done'}
+          disabled={isTrashing}
+        />
       </div>
     </>
   )
@@ -148,14 +180,23 @@ function RevealButton({ path }: { path: string }): JSX.Element {
 function TrashButton({
   path,
   sizeBytes,
-  kind
+  kind,
+  status,
+  disabled
 }: {
   path: string
   sizeBytes: number
   kind: 'file' | 'folder'
+  status: 'pending' | 'scanning' | 'done' | 'error' | 'denied' | 'trashing' | 'trashed'
+  disabled: boolean
 }): JSX.Element {
+  // The "busy" state is now strictly the brief moment between confirm() and
+  // the IPC reply (which returns immediately after marking — see
+  // src/main/index.ts). The actual move-to-trash runs in the background and
+  // its progress is shown via node status (trashing → trashed).
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
+
   const onClick = async (): Promise<void> => {
     const ok = window.confirm(
       `Move this ${kind} to the Trash?\n\n${path}\n\n${formatBytes(sizeBytes)}`
@@ -167,10 +208,17 @@ function TrashButton({
     setBusy(false)
     if (!res.ok) setErr(res.error)
   }
+
+  const label = (() => {
+    if (status === 'trashed') return 'Already moved to Trash'
+    if (status === 'trashing' || busy) return 'Moving to Trash…'
+    return `Move to Trash (${formatBytes(sizeBytes)})`
+  })()
+
   return (
     <>
-      <button className="danger" onClick={onClick} disabled={busy}>
-        {busy ? 'Moving…' : `Move to Trash (${formatBytes(sizeBytes)})`}
+      <button className="danger" onClick={onClick} disabled={disabled || busy}>
+        {label}
       </button>
       {err && <div style={{ color: '#fca5a5', marginTop: 6 }}>Failed: {err}</div>}
     </>

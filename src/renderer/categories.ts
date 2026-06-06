@@ -59,3 +59,19 @@ export function dominantCategory(
   }
   return best
 }
+
+/** True if a directory's status means the user can no longer interact with
+ *  it (it's mid-delete or already a tombstone). */
+export function isDirInert(status: string): boolean {
+  return status === 'trashing' || status === 'trashed'
+}
+
+/** True if a leaf file in `parentNode` is currently being trashed. */
+export function isFileTrashing(
+  trashingFiles: string[] | Set<string> | undefined,
+  fileName: string
+): boolean {
+  if (!trashingFiles) return false
+  if (Array.isArray(trashingFiles)) return trashingFiles.includes(fileName)
+  return trashingFiles.has(fileName)
+}

@@ -189,6 +189,117 @@ export class ScannerController extends EventEmitter {
     return false
   }
 
+  /**
+   * Optimistically mark a path as 'trashing' so the renderer can grey it out
+   * immediately. Also drops any pending scan tasks beneath it so we don't
+   * waste I/O on a doomed subtree.
+   *
+   * For directory targets the status propagates down the subtree (every
+   * descendant dir node becomes inert too). For leaf-file targets we instead
+   * stash a marker on the parent so the renderer's file-rendering path knows
+   * to grey it.
+   *
+   * Returns the kind of target so callers can plan their follow-up.
+   */
+  markTrashing(targetPath: string): 'dir' | 'file' | 'unknown' {
+    const t = path.resolve(targetPath)
+    const node = this.index.get(t)
+    if (node) {
+      this.applyTrashStatus(node, 'trashing')
+      // Also drop pending scan tasks under this subtree — they are about to
+      // disappear; no point wasting threadpool slots.
+      const prefix = t.endsWith(path.sep) ? t : t + path.sep
+      this.queue.drop((task) => task.path === t || task.path.startsWith(prefix))
+      this.emitPatch(node.path, node)
+      // The parent's stub of this child needs updating in the renderer too —
+      // emitting a parent patch flushes the child stub with new status.
+      const parent = this.parentOf(node)
+      if (parent) this.emitPatch(parent.path, parent)
+      return 'dir'
+    }
+    // Maybe a leaf file inside a known parent.
+    const parentPath = path.dirname(t)
+    const parent = this.index.get(parentPath)
+    if (parent) {
+      const name = path.basename(t)
+      const f = parent.files.find((x) => x.name === name)
+      if (f) {
+        if (!parent.trashingFiles) parent.trashingFiles = new Set()
+        ;(parent.trashingFiles as Set<string>).add(name)
+        this.emitPatch(parent.path, parent)
+        return 'file'
+      }
+    }
+    return 'unknown'
+  }
+
+  /**
+   * After a successful trash:
+   *  - Directory: convert to a 'trashed' tombstone (subtree status, size kept
+   *    so the user can still see what was removed; ancestors keep counting it
+   *    in their totals to avoid jarring shrinkage). Tombstones are inert.
+   *  - File: actually remove it from the parent and bubble size deltas, since
+   *    we don't keep individual file tombstones (would clutter the treemap).
+   */
+  markTrashed(targetPath: string): void {
+    const t = path.resolve(targetPath)
+    const node = this.index.get(t)
+    if (node) {
+      this.applyTrashStatus(node, 'trashed')
+      this.emitPatch(node.path, node)
+      const parent = this.parentOf(node)
+      if (parent) this.emitPatch(parent.path, parent)
+      return
+    }
+    const parentPath = path.dirname(t)
+    const parent = this.index.get(parentPath)
+    if (parent) {
+      const name = path.basename(t)
+      const i = parent.files.findIndex((x) => x.name === name)
+      if (i >= 0) {
+        const f = parent.files[i]
+        parent.files.splice(i, 1)
+        parent.ownSize -= f.size
+        const delta: Partial<Record<FileCategory, number>> = { [f.category]: -f.size }
+        ;(parent.trashingFiles as Set<string> | undefined)?.delete(name)
+        this.bubbleUp(parent, -f.size, delta)
+        this.emitPatch(parent.path, parent)
+      }
+    }
+  }
+
+  /** Revert an optimistic 'trashing' state on failure. */
+  unmarkTrashing(targetPath: string): void {
+    const t = path.resolve(targetPath)
+    const node = this.index.get(t)
+    if (node) {
+      // Walk subtree restoring whatever pre-trash status was — for simplicity
+      // anything not 'pending'/'scanning' becomes 'done', which matches what
+      // the user saw before they clicked.
+      this.restoreFromTrashing(node)
+      this.emitPatch(node.path, node)
+      const parent = this.parentOf(node)
+      if (parent) this.emitPatch(parent.path, parent)
+      return
+    }
+    const parentPath = path.dirname(t)
+    const parent = this.index.get(parentPath)
+    if (parent && parent.trashingFiles) {
+      ;(parent.trashingFiles as Set<string>).delete(path.basename(t))
+      this.emitPatch(parent.path, parent)
+    }
+  }
+
+  private applyTrashStatus(node: DirNode, status: 'trashing' | 'trashed'): void {
+    node.status = status
+    for (const c of Object.values(node.children)) this.applyTrashStatus(c, status)
+  }
+
+  private restoreFromTrashing(node: DirNode): void {
+    if (node.status === 'trashing') node.status = 'done'
+    for (const c of Object.values(node.children)) this.restoreFromTrashing(c)
+  }
+
   // ────────────────────────── internals ──────────────────────────
 
   private removeFromIndex(node: DirNode): void {
@@ -347,7 +458,7 @@ export class ScannerController extends EventEmitter {
 
   /** Strip nested children so each patch is bounded — children are sent as
    *  shallow stubs (size + status only). The renderer tracks them separately
-   *  via their own patches. */
+   *  via their own patches. Sets are converted to arrays for IPC. */
   private serializeNode(node: DirNode): DirNode {
     const childStubs: Record<string, DirNode> = {}
     for (const [k, c] of Object.entries(node.children)) {
@@ -372,7 +483,10 @@ export class ScannerController extends EventEmitter {
       status: node.status,
       breakdown: { ...node.breakdown },
       crossDevice: node.crossDevice,
-      error: node.error
+      error: node.error,
+      trashingFiles: node.trashingFiles
+        ? Array.from(node.trashingFiles as Set<string>)
+        : undefined
     }
   }
 

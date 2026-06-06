@@ -7,7 +7,9 @@ import {
   CATEGORY_LABEL,
   CATEGORY_ORDER,
   dominantCategory,
-  formatBytes
+  formatBytes,
+  isDirInert,
+  isFileTrashing
 } from '../categories'
 
 /**
@@ -40,8 +42,18 @@ export function TreemapView(): JSX.Element {
   const layout = useMemo(() => {
     if (!focused) return null
     return computeLayout(focused, size.w, size.h)
-  }, [focused, size.w, size.h, /* re-layout when size/breakdown change */
-      focused?.size, Object.keys(focused?.children ?? {}).length, focused?.files.length])
+  }, [
+    focused,
+    size.w,
+    size.h,
+    // re-layout when relevant aspects of the focused subtree change
+    focused?.size,
+    Object.keys(focused?.children ?? {}).length,
+    focused?.files.length,
+    focused?.status,
+    serializeTrashingFiles(focused?.trashingFiles),
+    serializeChildStatuses(focused)
+  ])
 
   const [hover, setHover] = useState<{
     x: number
@@ -49,6 +61,7 @@ export function TreemapView(): JSX.Element {
     label: string
     sub: string
     bytes: number
+    note?: string
   } | null>(null)
 
   return (
@@ -60,15 +73,26 @@ export function TreemapView(): JSX.Element {
       <svg width={size.w} height={size.h} style={{ display: 'block' }}>
         {layout?.cells.map((c) => {
           const isDir = c.kind === 'dir'
-          const cellClass = `cell ${isDir && (c.status === 'scanning' || c.status === 'pending') ? 'scanning' : ''} ${
-            c.status === 'denied' ? 'denied' : ''
-          }`
+          const inert =
+            c.status === 'trashing' ||
+            c.status === 'trashed' ||
+            (c.kind === 'file' && c.fileTrashing === true)
+          const cellClass = [
+            'cell',
+            isDir && (c.status === 'scanning' || c.status === 'pending') ? 'scanning' : '',
+            c.status === 'denied' ? 'denied' : '',
+            c.status === 'trashing' || c.fileTrashing ? 'trashing' : '',
+            c.status === 'trashed' ? 'trashed' : ''
+          ]
+            .filter(Boolean)
+            .join(' ')
           return (
             <g
               key={c.path}
               className={cellClass}
               transform={`translate(${c.x0},${c.y0})`}
               onClick={() => {
+                if (inert) return
                 if (isDir) {
                   setFocus(c.path)
                   window.api.focus(c.path)
@@ -83,16 +107,30 @@ export function TreemapView(): JSX.Element {
                   y: (e.clientY - (rect?.top ?? 0)) + 12,
                   label: basename(c.path),
                   sub: c.path,
-                  bytes: c.value
+                  bytes: c.value,
+                  note:
+                    c.status === 'trashing' || c.fileTrashing
+                      ? 'Moving to Trash…'
+                      : c.status === 'trashed'
+                        ? 'Moved to Trash'
+                        : undefined
                 })
               }}
-              style={{ cursor: 'pointer' }}
+              style={{ cursor: inert ? 'not-allowed' : 'pointer' }}
             >
               <rect
                 width={Math.max(0, c.x1 - c.x0)}
                 height={Math.max(0, c.y1 - c.y0)}
                 fill={c.color}
-                opacity={c.kind === 'file' ? 0.75 : 0.92}
+                opacity={
+                  c.status === 'trashing' || c.fileTrashing
+                    ? 0.35
+                    : c.status === 'trashed'
+                      ? 0.5
+                      : c.kind === 'file'
+                        ? 0.75
+                        : 0.92
+                }
               />
               {c.x1 - c.x0 > 70 && c.y1 - c.y0 > 22 && (
                 <>
@@ -125,6 +163,7 @@ export function TreemapView(): JSX.Element {
           <div><strong>{hover.label}</strong></div>
           <div className="path">{hover.sub}</div>
           <div className="size">{formatBytes(hover.bytes)}</div>
+          {hover.note && <div style={{ color: '#fca5a5' }}>{hover.note}</div>}
         </div>
       )}
     </div>
@@ -134,7 +173,9 @@ export function TreemapView(): JSX.Element {
 interface Cell {
   path: string
   kind: 'dir' | 'file'
-  status: 'pending' | 'scanning' | 'done' | 'error' | 'denied'
+  status: 'pending' | 'scanning' | 'done' | 'error' | 'denied' | 'trashing' | 'trashed'
+  /** Only relevant for files — set when the file is mid-trash. */
+  fileTrashing?: boolean
   x0: number
   y0: number
   x1: number
@@ -151,6 +192,7 @@ interface Item {
   path: string
   kind: 'dir' | 'file'
   status: Cell['status']
+  fileTrashing?: boolean
   value: number
   color: string
 }
@@ -188,6 +230,7 @@ function computeLayout(node: DirNode, w: number, h: number): Layout {
       path: node.path + '/' + f.name,
       kind: 'file',
       status: 'done',
+      fileTrashing: isFileTrashing(node.trashingFiles, f.name),
       value: f.size,
       color: CATEGORY_COLOR[f.category]
     })
@@ -223,6 +266,7 @@ function computeLayout(node: DirNode, w: number, h: number): Layout {
       path: item.path,
       kind: item.kind,
       status: item.status,
+      fileTrashing: item.fileTrashing,
       x0: leaf.x0!,
       y0: leaf.y0!,
       x1: leaf.x1!,
@@ -238,6 +282,23 @@ function basename(p: string): string {
   if (p.includes('/§other-')) return 'other ' + p.split('/§other-')[1]
   const i = p.lastIndexOf('/')
   return i >= 0 ? p.slice(i + 1) : p
+}
+
+function serializeTrashingFiles(
+  t: string[] | Set<string> | undefined
+): string {
+  if (!t) return ''
+  if (Array.isArray(t)) return t.join(',')
+  return Array.from(t).join(',')
+}
+
+function serializeChildStatuses(node: DirNode | null): string {
+  if (!node) return ''
+  // Cheap fingerprint — picks up trashing/trashed/scanning transitions of
+  // any direct child so the treemap re-renders.
+  const parts: string[] = []
+  for (const c of Object.values(node.children)) parts.push(c.status)
+  return parts.join(',')
 }
 
 function truncate(s: string, n: number): string {

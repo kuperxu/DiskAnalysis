@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
 import { useStore } from '../store'
 import type { DirNode } from '@shared/types'
-import { formatBytes } from '../categories'
+import { formatBytes, isDirInert } from '../categories'
 
 export function Sidebar(): JSX.Element {
   const tree = useStore((s) => s.tree)
@@ -27,25 +27,44 @@ function TreeRow({ node, depth }: RowProps): JSX.Element {
   const hasChildren = children.length > 0
   const isActive = focusPath === node.path
   const isScanning = node.status === 'scanning' || node.status === 'pending'
+  const inert = isDirInert(node.status)
 
   const handleClick = (): void => {
+    if (inert) return // greyed-out / tombstoned — ignore clicks
     setFocus(node.path)
     if (hasChildren) setOpen(true)
     // Boost priority on click so unscanned subtrees come up faster.
     window.api.focus(node.path)
   }
 
+  const stateClass =
+    node.status === 'trashing'
+      ? 'trashing'
+      : node.status === 'trashed'
+        ? 'trashed'
+        : isScanning
+          ? 'scanning'
+          : ''
+
   return (
     <div>
       <div
-        className={`tree-row ${isActive ? 'active' : ''} ${isScanning ? 'scanning' : ''}`}
+        className={`tree-row ${isActive && !inert ? 'active' : ''} ${stateClass}`}
         style={{ paddingLeft: depth * 12 + 4 }}
         onClick={handleClick}
+        title={
+          node.status === 'trashing'
+            ? 'Moving to Trash…'
+            : node.status === 'trashed'
+              ? 'Moved to Trash'
+              : node.path
+        }
       >
         <span
           className="twirl"
           onClick={(e) => {
             e.stopPropagation()
+            if (inert) return
             setOpen((o) => !o)
           }}
         >

@@ -13,7 +13,18 @@ export type FileCategory =
   | 'app'
   | 'other'
 
-export type ScanStatus = 'pending' | 'scanning' | 'done' | 'error' | 'denied'
+export type ScanStatus =
+  | 'pending'
+  | 'scanning'
+  | 'done'
+  | 'error'
+  | 'denied'
+  /** Optimistically marked for trash; user can't interact with it. */
+  | 'trashing'
+  /** Trashed successfully but kept as a tombstone in the tree (greyed-out
+   *  red) so the user can see what was removed. The node is not pruned —
+   *  it's just inert. */
+  | 'trashed'
 
 /** A summarized file entry kept on its parent directory. We never create a
  *  full DirNode for leaf files — there can be millions, and they don't have
@@ -43,6 +54,11 @@ export interface DirNode {
   crossDevice?: boolean
   /** Optional error message when status === 'error' or 'denied'. */
   error?: string
+  /** Names of leaf files inside this directory that are mid-trash (UI greys
+   *  them out). Cleared when the trash op completes (file is removed from
+   *  `files`) or fails (entry removed from this set). Sent over IPC as a
+   *  plain array — see serializeNode. */
+  trashingFiles?: Set<string> | string[]
 }
 
 /** A patch broadcast from main to renderer when a directory finishes scanning.
@@ -83,7 +99,10 @@ export interface RendererApi {
    *  scans next. No-op if path already 'done' or unknown. */
   focus: (path: string) => Promise<void>
 
-  /** Move a file/dir to the system trash and prune it from the tree. */
+  /** Move a file/dir to the system trash and prune it from the tree.
+   *  Returns immediately after marking the node — actual deletion runs in
+   *  the background and lifecycle of the node updates via tree patches
+   *  (status: 'trashing' → 'trashed' or back to 'done' on failure). */
   trash: (path: string) => Promise<{ ok: true } | { ok: false; error: string }>
 
   /** Reveal the path in Finder (selects it in its parent folder). */

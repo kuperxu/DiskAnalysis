@@ -69,6 +69,7 @@ export const useStore = create<AppState>((set, get) => ({
         target.breakdown = patch.node.breakdown
         target.error = patch.node.error
         target.crossDevice = patch.node.crossDevice
+        target.trashingFiles = patch.node.trashingFiles
 
         // Merge children stubs: for any new child not already in target,
         // create it; for existing ones, update size/status only (don't

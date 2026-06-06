@@ -92,20 +92,37 @@ function setupIpc(): void {
   })
 
   ipcMain.handle(IPC.trash, async (_e, p: string) => {
-    try {
-      // Refuse if the path doesn't exist or is the scan root itself.
-      if (!fs.existsSync(p)) return { ok: false, error: 'Not found' }
-      const root = scanner?.getTree()?.path
-      if (root && path.resolve(p) === path.resolve(root)) {
-        return { ok: false, error: 'Refusing to trash the scan root' }
-      }
-      await shell.trashItem(p)
-      scanner?.prune(p)
-      cache?.invalidate(p)
-      return { ok: true } as const
-    } catch (e) {
-      return { ok: false, error: (e as Error).message } as const
+    // Refuse fast cases synchronously — the renderer awaits this just for the
+    // refusal feedback, otherwise it returns ok almost instantly and the
+    // actual `shell.trashItem` runs in the background.
+    if (!fs.existsSync(p)) return { ok: false, error: 'Not found' }
+    const root = scanner?.getTree()?.path
+    if (root && path.resolve(p) === path.resolve(root)) {
+      return { ok: false, error: 'Refusing to trash the scan root' }
     }
+
+    // Optimistic UI: mark immediately so the renderer can grey out the cell.
+    scanner?.markTrashing(p)
+
+    // Don't await — return ok now; if shell.trashItem fails later, we revert
+    // the mark and broadcast a fresh patch. This is what stops the UI from
+    // hanging during a slow trash operation (e.g. a large folder on a slow
+    // disk, or a path that triggers a system permission prompt).
+    void (async (): Promise<void> => {
+      try {
+        await shell.trashItem(p)
+        scanner?.markTrashed(p)
+        // Fire-and-forget cache invalidation; don't block tree updates on it.
+        queueMicrotask(() => cache?.invalidate(p))
+      } catch (e) {
+        scanner?.unmarkTrashing(p)
+        // Surface to the main console; renderer sees the node return to its
+        // prior state via the patch from unmarkTrashing.
+        console.error('[trash] failed', p, e)
+      }
+    })()
+
+    return { ok: true } as const
   })
 }
 
