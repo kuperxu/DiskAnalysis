@@ -20,6 +20,8 @@
 | `IPC.reveal` | renderer → main | `shell.showItemInFolder`,失败 fallback 打开父目录 |
 | `IPC.openExternal` | renderer → main | `shell.openExternal` — https / mailto / `x-apple.systempreferences:` 等 |
 | `IPC.getTree` | renderer → main → renderer | 渲染层(重新)挂载时 hydrate 当前树 |
+| `IPC.getSettings` | renderer → main → renderer | 启动时拉取当前用户设置 |
+| `IPC.setSettings` | renderer → main → renderer | 写入设置 patch,返回 merge 后的全量值;side effect: 触发 `scanner.applySettings` |
 | `IPC.patch` | main → renderer (event) | 增量树 patch,80ms 批 |
 | `IPC.lifecycle` | main → renderer (event) | `idle` / `scanning` / `paused` / `done` / `error` 状态 |
 | `IPC.notice` | main → renderer (event) | Toast 通知(见 notices.md) |

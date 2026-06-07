@@ -82,7 +82,8 @@ export function TreemapView(): JSX.Element {
             isDir && (c.status === 'scanning' || c.status === 'pending') ? 'scanning' : '',
             c.status === 'denied' ? 'denied' : '',
             c.status === 'trashing' || c.fileTrashing ? 'trashing' : '',
-            c.status === 'trashed' ? 'trashed' : ''
+            c.status === 'trashed' ? 'trashed' : '',
+            c.status === 'collapsed' ? 'collapsed' : ''
           ]
             .filter(Boolean)
             .join(' ')
@@ -113,7 +114,9 @@ export function TreemapView(): JSX.Element {
                       ? 'Moving to Trash…'
                       : c.status === 'trashed'
                         ? 'Moved to Trash'
-                        : undefined
+                        : c.status === 'collapsed'
+                          ? 'Collapsed (below threshold). Click to expand.'
+                          : undefined
                 })
               }}
               style={{ cursor: inert ? 'not-allowed' : 'pointer' }}
@@ -127,9 +130,11 @@ export function TreemapView(): JSX.Element {
                     ? 0.35
                     : c.status === 'trashed'
                       ? 0.5
-                      : c.kind === 'file'
-                        ? 0.75
-                        : 0.92
+                      : c.status === 'collapsed'
+                        ? 0.55
+                        : c.kind === 'file'
+                          ? 0.75
+                          : 0.92
                 }
               />
               {c.x1 - c.x0 > 70 && c.y1 - c.y0 > 22 && (
@@ -173,7 +178,7 @@ export function TreemapView(): JSX.Element {
 interface Cell {
   path: string
   kind: 'dir' | 'file'
-  status: 'pending' | 'scanning' | 'done' | 'error' | 'denied' | 'trashing' | 'trashed'
+  status: 'pending' | 'scanning' | 'done' | 'error' | 'denied' | 'trashing' | 'trashed' | 'collapsed'
   /** Only relevant for files — set when the file is mid-trash. */
   fileTrashing?: boolean
   x0: number
@@ -207,7 +212,13 @@ function computeLayout(node: DirNode, w: number, h: number): Layout {
       path: child.path,
       kind: 'dir',
       status: child.status,
-      value: Math.max(child.size, child.status === 'pending' || child.status === 'scanning' ? 1 : 0),
+      // Pending/scanning dirs need a non-zero placeholder so they're
+      // visible early. Collapsed dirs already have an accurate `size` so
+      // they don't need padding.
+      value: Math.max(
+        child.size,
+        child.status === 'pending' || child.status === 'scanning' ? 1 : 0
+      ),
       color: CATEGORY_COLOR[dominantCategory(child.breakdown)]
     })
   }

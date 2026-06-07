@@ -25,6 +25,11 @@ export type ScanStatus =
    *  red) so the user can see what was removed. The node is not pruned —
    *  it's just inert. */
   | 'trashed'
+  /** Fully scanned (size + breakdown are accurate) but the file-level
+   *  details have been dropped because the subtree is below the user's
+   *  `expandDirThreshold` setting. The treemap renders this as a single
+   *  block; clicking it triggers a re-scan that preserves details. */
+  | 'collapsed'
 
 /** A summarized file entry kept on its parent directory. We never create a
  *  full DirNode for leaf files — there can be millions, and they don't have
@@ -72,6 +77,22 @@ export interface TreePatch {
   ancestorDelta?: number
   /** Per-category delta to apply to ancestors. */
   ancestorBreakdownDelta?: Partial<Record<FileCategory, number>>
+}
+
+/** Per-user settings persisted to `userData/settings.json`. */
+export interface Settings {
+  /** Collapse any fully-scanned subtree whose total size is below this many
+   *  bytes. The size is *accurate* — we scan everything — but the file-level
+   *  details under collapsed nodes are dropped to keep the treemap clean and
+   *  reduce renderer memory. Clicking a collapsed node re-scans it with
+   *  details preserved. Set to 0 to disable collapsing.
+   *  Default: 100 MiB. */
+  expandDirThreshold: number
+}
+
+export const DEFAULT_SETTINGS: Settings = {
+  // 100 MiB. Stored as bytes for precision; the UI shows it in MB.
+  expandDirThreshold: 100 * 1024 * 1024
 }
 
 export type ScanLifecycle =
@@ -136,6 +157,14 @@ export interface RendererApi {
 
   /** Get current full tree (used after the renderer (re)mounts). */
   getTree: () => Promise<DirNode | null>
+
+  /** Read the persisted settings on mount. */
+  getSettings: () => Promise<Settings>
+
+  /** Persist a new settings object; returns the merged saved value.
+   *  Side effect: certain fields (`expandDirThreshold`) re-evaluate
+   *  collapsed nodes / re-fold subtrees that crossed the threshold. */
+  setSettings: (patch: Partial<Settings>) => Promise<Settings>
 }
 
 declare global {
@@ -156,6 +185,8 @@ export const IPC = {
   reveal: 'fs:reveal',
   openExternal: 'shell:openExternal',
   getTree: 'scan:getTree',
+  getSettings: 'settings:get',
+  setSettings: 'settings:set',
   // event -> renderer
   patch: 'scan:patch',
   lifecycle: 'scan:lifecycle',

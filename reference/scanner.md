@@ -52,3 +52,22 @@ I/O bound 不需要 worker_threads。直接维护 N 个并发 Promise,N = `max(4
 `markTrashing(path)`、`markTrashed(path)`、`unmarkTrashing(path)`、`prune(path)` — 详见 [trash.md](trash.md)。
 
 关键性能点:`markTrashing` **O(1) on the target**,不递归子树。subtree inert 状态在 `serializeNode()` 时通过 `trashingRoots` / `trashedRoots` Set 派生;queue 里 doomed 任务在 `runTask` 开头检查跳过,而不是 O(n) heap drop。
+
+## expandDirThreshold 折叠策略
+
+来自 [settings.md](settings.md) 的 `Settings.expandDirThreshold`(默认 100 MiB):
+
+**核心承诺:size 永远准确**。所有目录都会被完整扫到叶子,size 和 breakdown 都是真实值。阈值只控制 UI 是否展开细节。
+
+实现走"事后折叠":
+
+- `runTask` 不做任何阈值判断,所有 subdir 都正常入队扫描。
+- 每个目录有一个 `pendingChildCount`(controller 私有 Map),初始 = `result.subdirs.length`。
+- 一个目录的 readdir 完成后,如果它没 subdir → 立刻 `onSubtreeSettled(node)`;否则等所有子节点的 settle 事件来递减计数。
+- `onSubtreeSettled(node)` 触发两件事:
+  1. `maybeCollapse(node)`:如果 node 自己 status==='done' 且 `node.size < threshold` 且不是扫描根 / 不在 expandedOverrides → **drop 子树**(`removeFromIndex` 把所有后代节点从 index 摘掉,`children = {}`、`files = []`),status 翻 `'collapsed'`。size 和 breakdown **保留**,所以祖先合计不变。
+  2. 沿父链递减 `pendingChildCount`,父亲到 0 后递归 settle。
+- 用户点击 `'collapsed'` 节点 → `controller.focus()` → `expandCollapsed(t)`:加 `expandedOverrides.add(t)` 防止它被立刻再折叠;扣掉它在祖先的 size 贡献(后续 patch 会重新加回去);status 翻 `'pending'` 入队重扫,这次 maybeCollapse 因 expandedOverrides 而 noop。
+- `applySettings` 阈值变化 → `reapplyThreshold()` 走全树深度优先:每个节点先递归子节点(让最深的先 collapse),再 maybeCollapse 自己。这样阈值升高时父子可以连续折叠。**只折叠不展开**:阈值降低后,被折叠的不会自动恢复,用户得手动点开(否则要重做 I/O,违反"不丢已扫数据"的原则)。
+
+性能层面诚实交代:**I/O 不省**(本来就是大头),**省的是渲染层内存** — 千万级文件不再每个一条 FileEntry,treemap 也不需要画几百层。这跟用户"folder 准确数字"的优先级匹配。

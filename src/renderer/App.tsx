@@ -10,6 +10,7 @@ import {
   useToasts,
   useConfirm
 } from './components/Notices'
+import { SettingsButton, useSettings } from './components/Settings'
 
 export default function App(): JSX.Element {
   const setTree = useStore((s) => s.setTree)
@@ -18,12 +19,14 @@ export default function App(): JSX.Element {
   const tree = useStore((s) => s.tree)
   const pushToast = useToasts((s) => s.push)
   const confirm = useConfirm((s) => s.ask)
+  const hydrateSettings = useSettings((s) => s.hydrate)
 
   useEffect(() => {
     // Hydrate from main if it already has a tree (e.g. window reopened).
     window.api.getTree().then((t) => {
       if (t) setTree(t)
     })
+    window.api.getSettings().then(hydrateSettings)
     const offPatch = window.api.onPatch(applyPatch)
     const offLife = window.api.onLifecycle(setLifecycle)
     const offNotice = window.api.onNotice(pushToast)
@@ -32,13 +35,16 @@ export default function App(): JSX.Element {
       offLife()
       offNotice()
     }
-  }, [setTree, applyPatch, setLifecycle, pushToast])
+  }, [setTree, applyPatch, setLifecycle, pushToast, hydrateSettings])
 
   return (
     <div className="app">
       <ControlBar />
       <div className="sidebar">
-        <Sidebar />
+        <div className="sidebar-list">
+          <Sidebar />
+        </div>
+        <SettingsButton />
       </div>
       <div className="treemap-pane">
         {tree ? (
@@ -64,7 +70,7 @@ export default function App(): JSX.Element {
                     'Full Disk Access (System Settings → Privacy & Security → ' +
                     'Full Disk Access) to see ~/Library and other protected ' +
                     'folders. System paths and other mounted volumes are ' +
-                    'skipped automatically.',
+                    'excluded automatically.',
                   confirmLabel: 'Scan disk',
                   cancelLabel: 'Cancel'
                 })

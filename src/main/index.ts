@@ -7,10 +7,12 @@ import {
   type DirNode,
   type ScanLifecycle,
   type TreePatch,
-  type Notice
+  type Notice,
+  type Settings
 } from '../shared/types'
 import { ScannerController } from './scanner/controller'
 import { CacheStore } from './cache/store'
+import { SettingsStore } from './settings/store'
 
 // Bump the libuv threadpool so concurrent fs.lstat / readdir calls don't
 // queue against each other. Must be set BEFORE any I/O kicks off, ie. here
@@ -30,6 +32,7 @@ process.noAsar = true
 let mainWindow: BrowserWindow | null = null
 let scanner: ScannerController | null = null
 let cache: CacheStore | null = null
+let settings: SettingsStore | null = null
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -110,6 +113,7 @@ function classifyTrashError(p: string, e: unknown): Notice {
 
 function setupScanner(): void {
   scanner = new ScannerController()
+  if (settings) scanner.applySettings(settings.get())
 
   scanner.on('patch', (patch: TreePatch) => {
     mainWindow?.webContents.send(IPC.patch, patch)
@@ -150,6 +154,13 @@ function setupIpc(): void {
   ipcMain.handle(IPC.resume, () => scanner?.resume())
   ipcMain.handle(IPC.focus, (_e, p: string) => scanner?.focus(p))
   ipcMain.handle(IPC.getTree, (): DirNode | null => scanner?.getTree() ?? null)
+
+  ipcMain.handle(IPC.getSettings, (): Settings => settings!.get())
+  ipcMain.handle(IPC.setSettings, (_e, patch: Partial<Settings>): Settings => {
+    const next = settings!.set(patch)
+    scanner?.applySettings(next)
+    return next
+  })
 
   ipcMain.handle(IPC.reveal, (_e, p: string) => {
     // showItemInFolder opens Finder and highlights the item; if the path no
@@ -230,6 +241,7 @@ function setupIpc(): void {
 
 app.whenReady().then(() => {
   cache = new CacheStore(path.join(app.getPath('userData'), 'cache.db'))
+  settings = new SettingsStore(path.join(app.getPath('userData'), 'settings.json'))
   setupScanner()
   setupIpc()
   createWindow()
@@ -241,5 +253,6 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   cache?.close()
+  settings?.flush()
   if (process.platform !== 'darwin') app.quit()
 })

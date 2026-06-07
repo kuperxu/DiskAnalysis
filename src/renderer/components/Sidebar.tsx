@@ -42,9 +42,11 @@ function TreeRow({ node, depth }: RowProps): JSX.Element {
       ? 'trashing'
       : node.status === 'trashed'
         ? 'trashed'
-        : isScanning
-          ? 'scanning'
-          : ''
+        : node.status === 'collapsed'
+          ? 'collapsed'
+          : isScanning
+            ? 'scanning'
+            : ''
 
   return (
     <div>
@@ -57,7 +59,9 @@ function TreeRow({ node, depth }: RowProps): JSX.Element {
             ? 'Moving to Trash…'
             : node.status === 'trashed'
               ? 'Moved to Trash'
-              : node.path
+              : node.status === 'collapsed'
+                ? 'Collapsed (below the threshold setting). Click to expand.'
+                : node.path
         }
       >
         <span

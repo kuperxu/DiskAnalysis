@@ -6,8 +6,10 @@ import type {
   DirNode,
   TreePatch,
   ScanLifecycle,
-  FileCategory
+  FileCategory,
+  Settings
 } from '../../shared/types'
+import { DEFAULT_SETTINGS } from '../../shared/types'
 import { PriorityQueue } from './queue'
 import { scanDirectory, makeNode, breakdownDelta } from './tree'
 import { CATEGORY_ORDER, emptyBreakdown } from './fileTypes'
@@ -65,6 +67,25 @@ export class ScannerController extends EventEmitter {
    *  UI keeps showing the strike-through. */
   private trashedRoots = new Set<string>()
 
+  /** Current user settings. Mutated via applySettings(). The
+   *  expandDirThreshold field is consulted whenever a subtree finishes
+   *  scanning, to decide whether to fold it. */
+  private settings: Settings = { ...DEFAULT_SETTINGS }
+
+  /** Per-node count of children whose subtree is not yet fully scanned.
+   *  Initialized to result.subdirs.length when a dir's own readdir
+   *  completes; decremented from a child as it settles. When this hits 0
+   *  the node's whole subtree is known and we can decide to collapse it.
+   *
+   *  Kept off DirNode itself because (a) it's a transient bookkeeping
+   *  field, not part of the data model, and (b) we don't want to ship it
+   *  over IPC. */
+  private pendingChildCount = new Map<string, number>()
+
+  /** Roots the user has explicitly clicked to expand back. They're not
+   *  re-collapsed even if size < threshold. */
+  private expandedOverrides = new Set<string>()
+
   private startedAt = 0
   private cancelToken = 0
 
@@ -85,6 +106,8 @@ export class ScannerController extends EventEmitter {
     this.focusedPrefixes.clear()
     this.trashingRoots.clear()
     this.trashedRoots.clear()
+    this.pendingChildCount.clear()
+    this.expandedOverrides.clear()
     this.paused = false
     this.releasePause()
     this.pauseGate = Promise.resolve()
@@ -149,7 +172,15 @@ export class ScannerController extends EventEmitter {
       }
       return current
     })
-    if (moved > 0 && !this.paused) this.spinUp()
+    // If the user focused a 'collapsed' node, that's an implicit expand —
+    // re-scan the subtree so file details come back. The accurate size we
+    // already have stays; the re-scan only repopulates the structure.
+    const node = this.index.get(t)
+    if (node?.status === 'collapsed') {
+      this.expandCollapsed(t)
+    } else if (moved > 0 && !this.paused) {
+      this.spinUp()
+    }
   }
 
   private isFocused(p: string): boolean {
@@ -164,6 +195,85 @@ export class ScannerController extends EventEmitter {
     return this.isFocused(taskPath)
       ? ScannerController.FOCUS_BOOST + depth
       : depth
+  }
+
+  /**
+   * Settings hook. Mutated in place; changes take effect at the next
+   * subtree-settled check (which fires every time a scan completes).
+   * - Lowering the threshold will fold previously-expanded subtrees on the
+   *   next applicable settle event. We also walk now so the UI updates
+   *   without waiting for a fresh scan.
+   * - Raising the threshold doesn't auto-expand already-collapsed nodes:
+   *   the user can click them to expand. (Auto-expand would mean re-doing
+   *   I/O for every previously-folded subtree, which is wasteful and
+   *   surprising.)
+   */
+  applySettings(next: Settings): void {
+    const prev = this.settings
+    this.settings = { ...prev, ...next }
+    if (next.expandDirThreshold !== prev.expandDirThreshold) {
+      this.reapplyThreshold()
+    }
+  }
+
+  getSettings(): Settings {
+    return { ...this.settings }
+  }
+
+  private depthOf(p: string): number {
+    if (!this.root) return 0
+    if (p === this.root) return 0
+    const tail = p.slice(this.root.length).replace(/^\/+/, '')
+    return tail ? tail.split('/').length : 0
+  }
+
+  /**
+   * Re-scan a previously-collapsed subtree so file details come back.
+   * The collapsed node's `size`/`breakdown` are already accurate and stay;
+   * we just clear its 'collapsed' marker, reset it to pending, and let the
+   * scan loop walk it again to repopulate `children` and `files`.
+   */
+  private expandCollapsed(p: string): void {
+    const node = this.index.get(p)
+    if (!node || node.status !== 'collapsed') return
+    this.expandedOverrides.add(p)
+    // Save the current accurate size so we can compare after the re-scan
+    // and rebuild from zero without losing the "ancestor already counted
+    // this" budget. The simplest correct thing is to subtract it from
+    // ancestors, re-scan, and let the new patches rebuild ancestor totals.
+    const prevSize = node.size
+    const prevBreakdown = { ...node.breakdown }
+    node.size = 0
+    node.ownSize = 0
+    node.breakdown = emptyBreakdown()
+    node.files = []
+    node.status = 'pending'
+    // Subtract prev size from ancestors; the re-scan will add it back.
+    this.bubbleUp(this.parentOf(node), -prevSize, this.negate(prevBreakdown))
+    const depth = this.depthOf(p)
+    this.queue.push(
+      { path: p, depth },
+      this.priorityFor(p, depth) + ScannerController.FOCUS_BOOST
+    )
+    this.emitPatch(node.path, node)
+    if (!this.paused) this.spinUp()
+  }
+
+  /**
+   * Walk fully-scanned subtrees and apply the (possibly changed) threshold.
+   * Called after the user updates the setting. Only folds; never expands
+   * (see applySettings comment for why).
+   */
+  private reapplyThreshold(): void {
+    if (!this.tree) return
+    const visit = (node: DirNode): void => {
+      if (node.status === 'trashing' || node.status === 'trashed') return
+      // First recurse — collapse deepest qualifying subtrees first so the
+      // outer ones see correct (small) sizes and can collapse too.
+      for (const child of Object.values(node.children)) visit(child)
+      this.maybeCollapse(node)
+    }
+    visit(this.tree)
   }
 
   /** Remove a path from the tree (after trash). Bubble size deltas up. */
@@ -312,6 +422,7 @@ export class ScannerController extends EventEmitter {
 
   private removeFromIndex(node: DirNode): void {
     this.index.delete(node.path)
+    this.pendingChildCount.delete(node.path)
     for (const child of Object.values(node.children)) this.removeFromIndex(child)
     // Also remove its pending tasks from the queue.
     const prefix = node.path.endsWith(path.sep) ? node.path : node.path + path.sep
@@ -367,6 +478,9 @@ export class ScannerController extends EventEmitter {
       node.status = result.status
       node.error = result.error
       this.emitPatch(node.path, node)
+      // An errored/denied node has no subtree to wait on — settle now so
+      // ancestors can collapse if applicable.
+      this.onSubtreeSettled(node)
       return
     }
 
@@ -379,12 +493,16 @@ export class ScannerController extends EventEmitter {
     node.size += ownDelta
     node.status = 'done'
 
-    // Add subdir nodes (pending), enqueue them.
+    // Always enqueue every subdir — accurate size requires scanning to the
+    // leaves. The threshold is applied LATER, when the whole subtree under
+    // this node has finished, by collapsing too-small subtrees.
+    const childDepth = task.depth + 1
+    const subdirCount = result.subdirs.length
+    this.pendingChildCount.set(node.path, subdirCount)
     for (const child of result.subdirs) {
       const childNode = makeNode(child)
       node.children[path.basename(child)] = childNode
       this.index.set(child, childNode)
-      const childDepth = task.depth + 1
       this.queue.push(
         { path: child, depth: childDepth },
         this.priorityFor(child, childDepth)
@@ -401,6 +519,62 @@ export class ScannerController extends EventEmitter {
     // Bubble own-size delta + breakdown delta up to ancestors.
     const breakdownAdd = breakdownDelta(prevBreakdown, node.breakdown)
     this.bubbleUp(this.parentOf(node), ownDelta, breakdownAdd)
+    this.emitPatch(node.path, node)
+
+    // If this node has no subdirs, its subtree is settled now. Otherwise
+    // wait for each child's own settle to decrement pendingChildCount.
+    if (subdirCount === 0) this.onSubtreeSettled(node)
+  }
+
+  /**
+   * Called when `node` and every descendant have completed scanning (or
+   * errored/denied). At this point the node's `size` and `breakdown` are
+   * final. Apply two concerns:
+   *  1) Decrement the parent's pending count and, if it hits 0, recurse —
+   *     ancestors get to make their own collapse decision in turn.
+   *  2) Maybe collapse this subtree if it's below the threshold.
+   */
+  private onSubtreeSettled(node: DirNode): void {
+    this.maybeCollapse(node)
+    const parent = this.parentOf(node)
+    if (!parent) return
+    const remaining = (this.pendingChildCount.get(parent.path) ?? 0) - 1
+    if (remaining <= 0) {
+      this.pendingChildCount.delete(parent.path)
+      this.onSubtreeSettled(parent)
+    } else {
+      this.pendingChildCount.set(parent.path, remaining)
+    }
+  }
+
+  /**
+   * If this node is eligible for collapsing under the current threshold,
+   * fold it: drop file-level details and any tracked descendants, switch
+   * status to 'collapsed'. The size/breakdown are kept exactly as-is so
+   * ancestors keep counting them.
+   *
+   * Eligibility:
+   *  - status === 'done' (not error/denied/trashing/collapsed already)
+   *  - not at the scan root (folding the root would erase everything)
+   *  - not in `expandedOverrides` (user clicked it open)
+   *  - threshold > 0 (0 disables collapsing entirely)
+   *  - size < threshold
+   */
+  private maybeCollapse(node: DirNode): void {
+    if (!this.root || node.path === this.root) return
+    if (node.status !== 'done') return
+    if (this.expandedOverrides.has(node.path)) return
+    const t = this.settings.expandDirThreshold
+    if (t <= 0) return
+    if (node.size >= t) return
+
+    // Drop descendant nodes from the index and clear children/files. Size,
+    // breakdown, ownSize stay so the value is still the truth.
+    for (const child of Object.values(node.children)) this.removeFromIndex(child)
+    node.children = {}
+    node.files = []
+    node.status = 'collapsed'
+    this.pendingChildCount.delete(node.path)
     this.emitPatch(node.path, node)
   }
 

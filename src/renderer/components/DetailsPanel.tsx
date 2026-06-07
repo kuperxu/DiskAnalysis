@@ -188,7 +188,7 @@ function TrashButton({
   path: string
   sizeBytes: number
   kind: 'file' | 'folder'
-  status: 'pending' | 'scanning' | 'done' | 'error' | 'denied' | 'trashing' | 'trashed'
+  status: 'pending' | 'scanning' | 'done' | 'error' | 'denied' | 'trashing' | 'trashed' | 'collapsed'
   disabled: boolean
 }): JSX.Element {
   // The "busy" state is now strictly the brief moment between confirm and

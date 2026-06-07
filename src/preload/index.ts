@@ -5,7 +5,8 @@ import {
   type TreePatch,
   type ScanLifecycle,
   type DirNode,
-  type Notice
+  type Notice,
+  type Settings
 } from '../shared/types'
 
 const api: RendererApi = {
@@ -18,6 +19,10 @@ const api: RendererApi = {
   reveal: (path) => ipcRenderer.invoke(IPC.reveal, path),
   openExternal: (url) => ipcRenderer.invoke(IPC.openExternal, url),
   getTree: () => ipcRenderer.invoke(IPC.getTree) as Promise<DirNode | null>,
+
+  getSettings: () => ipcRenderer.invoke(IPC.getSettings) as Promise<Settings>,
+  setSettings: (patch) =>
+    ipcRenderer.invoke(IPC.setSettings, patch) as Promise<Settings>,
 
   onPatch: (cb) => {
     const listener = (_: unknown, patch: TreePatch) => cb(patch)

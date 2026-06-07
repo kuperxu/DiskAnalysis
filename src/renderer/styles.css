@@ -87,11 +87,22 @@ button.danger:hover { background: #991b1b; }
   grid-area: sidebar;
   background: #111827;
   border-right: 1px solid #0b1220;
-  overflow: auto;
-  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  /* No overflow on the outer sidebar — the inner list scrolls and the
+     settings button stays parked at the bottom of the column. */
+  overflow: hidden;
   /* Without min-width:0 a long file name inside a grid track forces the
      track to grow, pushing the treemap and details off-screen. */
   min-width: 0;
+}
+.sidebar-list {
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: 8px;
+  /* The scrollbar lives in this region only, so it stops just above the
+     settings button — exactly the layout the user asked for. */
+  min-height: 0;
 }
 .treemap-pane {
   grid-area: treemap;
@@ -421,4 +432,122 @@ button.danger:hover { background: #991b1b; }
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+
+/* ─────────────── Settings ─────────────── */
+
+/* Sits at the bottom of the sidebar column, full width. The list above it
+   takes the remaining vertical space and owns the scrollbar, so the
+   scrollbar stops right above this button. */
+.settings-button {
+  flex: 0 0 auto;
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  text-align: center;
+  background: #1e293b;
+  color: #cbd5e1;
+  border: none;
+  border-top: 1px solid #0b1220;
+  border-radius: 0;
+  padding: 10px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  /* Never show a focus ring or sticky pressed look. The cog is small
+     real-estate and the visual state lingering after Esc/click feels
+     like a stuck UI. Hover is the only feedback we need. */
+  outline: none;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.settings-button:focus,
+.settings-button:focus-visible,
+.settings-button:active {
+  outline: none;
+  background: #1e293b;
+  color: #cbd5e1;
+  box-shadow: none;
+}
+.settings-button:hover {
+  background: #334155;
+  color: #fff;
+}
+.settings-icon {
+  /* Cog glyph is rendered tiny at body font-size; bump it independently
+     so the label keeps the rest of the sidebar's 12px scale. */
+  font-size: 18px;
+  line-height: 1;
+  display: inline-block;
+  transform: translateY(-0.5px);
+}
+
+.settings-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  align-items: start;
+  padding: 8px 0;
+  border-top: 1px solid #1e293b;
+}
+.settings-row:first-of-type { border-top: none; }
+.settings-label {
+  font-weight: 600;
+  color: #e2e8f0;
+  margin-bottom: 4px;
+}
+.settings-hint {
+  color: #94a3b8;
+  font-size: 11px;
+  line-height: 1.5;
+  max-width: 280px;
+}
+.settings-control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.settings-control input[type='number'] {
+  width: 90px;
+  background: #0f172a;
+  color: #e2e8f0;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  padding: 4px 8px;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.settings-control input[type='number']:focus {
+  outline: none;
+  border-color: #3b82f6;
+}
+.settings-unit {
+  color: #94a3b8;
+  font-size: 11px;
+}
+
+/* ─────────────── Collapsed state ─────────────── */
+
+.tree-row.collapsed {
+  color: #94a3b8;
+  cursor: pointer;
+  font-style: italic;
+}
+.tree-row.collapsed .size::after {
+  content: ' · collapsed';
+  color: #64748b;
+  font-size: 10px;
+}
+.cell.collapsed rect {
+  stroke: #64748b;
+  stroke-width: 1.5;
+  stroke-dasharray: 6 3;
+}
+.cell.collapsed .cell-label {
+  fill: rgba(255, 255, 255, 0.85);
+  font-style: italic;
 }
