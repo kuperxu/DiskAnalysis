@@ -10,10 +10,12 @@ React 18 + zustand + immer + D3。三栏 grid 布局:左边目录树,中间 tree
 - `src/renderer/categories.ts` — 颜色 / 字节格式化 / `dominantCategory` / `isDirInert` / `isFileTrashing`
 - `src/renderer/styles.css` — 全部样式(深色,Apple 风)
 - `src/renderer/components/`
-  - `ControlBar.tsx` — 顶部:Choose folder / Pause / Resume / Breadcrumb / Status 文本
-  - `Sidebar.tsx` — 可折叠目录树,按 size 降序,每层最多渲染 200 项
-  - `TreemapView.tsx` — D3 squarified treemap
-  - `DetailsPanel.tsx` — 目录 / 文件 / pseudo 三种视图,Show in Finder + Move to Trash 按钮
+  - `ControlBar.tsx` — 顶部:Choose Folder…(填色蓝色 CTA)/ Pause / Resume / Breadcrumb / 右侧 status pill(带颜色点 + 文本,scanning 时蓝点呼吸)
+  - `Sidebar.tsx` — 已有扫描时:`Scans` header + 可折叠目录树;未扫描时:`SidebarEmpty`(folder + 放大镜 SVG 插图、`No scans yet`、`Recent folders` / `Smart cleanup rules` 两枚 placeholder 按钮)
+  - `TreemapView.tsx` — D3 squarified treemap(扫描存在时才挂载)
+  - `LandingHero.tsx` — 未扫描时占据中间区域:大幅 SVG 插图、`Start with a folder scan` 标题、`Choose a Folder to Scan` / `Scan Entire Disk` 双按钮、`Discover` 分隔线 + 三张分类卡(Large Files / Duplicates / Cache & Logs,目前是装饰性的,未与预设扫描挂钩)
+  - `DetailsPanel.tsx` — 目录 / 文件 / pseudo 三种视图,Show in Finder + Move to Trash 按钮(扫描存在时才挂载)
+  - `GettingStartedPanel.tsx` — 未扫描时占据右栏:`Getting Started` 头、`3 Simple Steps` 卡(编号步骤)、`Why scan?` 卡(✓ 列表)、`Scans stay on this Mac` 隐私 footer
   - `Notices.tsx` — Toast (`<ToastHost />`) + 非阻塞 confirm modal (`<ConfirmHost />`),见 [notices.md](notices.md)
   - `Settings.tsx` — 浮动 `<SettingsButton />` + `<SettingsModal />`,见 [settings.md](settings.md)
 
@@ -29,14 +31,17 @@ React 18 + zustand + immer + D3。三栏 grid 布局:左边目录树,中间 tree
 - `nodeAt(path)` 按 `/` 切片走 children map(child 键是 basename,不是全路径)。
 - `setFocus(p)` 同时清掉 `selectedPath`(从一个目录跳到另一个,前一个目录里选中的文件不应跨过去)。
 
-## 空状态
+## 空状态(pre-scan landing)
 
-```
-Choose a folder to scan   (主按钮 → window.api.pickRoot → window.api.start)
-Scan entire disk          (次按钮 → useConfirm.ask → window.api.start('/'))
-```
+`tree === null` 时三栏分别渲染:
 
-`Scan entire disk` 的二次确认走自定义非阻塞 modal(见 [notices.md](notices.md)),提示用户需要 Full Disk Access、系统路径会被自动跳过。
+- **Sidebar** → `<SidebarEmpty />`:`Scans (0)` header + folder/放大镜 SVG 插图 + `No scans yet` 标题 + 两枚 disabled placeholder 按钮(`Recent folders`、`Smart cleanup rules`,留给后续 feature)。
+- **Centre treemap pane** → `<LandingHero />`:hero SVG(folder + 放大镜 + 浮动 doc/image/chart 三张纸 + 磁盘 slab)、标题、副标题、`Choose a Folder to Scan` 主 CTA(→ `pickRoot` + `start`)、`Scan Entire Disk` 次 CTA(→ `useConfirm.ask` + `start('/')`)、`Discover` 分隔线 + 三张装饰卡。
+- **Right details pane** → `<GettingStartedPanel />`:`3 Simple Steps`(Choose / Review / Clean up) + `Why scan?`(三条 ✓) + 隐私 footer(`Scans stay on this Mac`)。
+
+`Scan Entire Disk` 的二次确认走自定义非阻塞 modal(见 [notices.md](notices.md)),提示用户需要 Full Disk Access、系统路径会被自动跳过。
+
+一旦 `tree` 非空,中间切到 `<TreemapView />`,右栏切到 `<DetailsPanel />`,Sidebar 顶部换成 `Scans (1)` 并展示目录树。
 
 ## 自适应布局
 

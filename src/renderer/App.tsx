@@ -4,11 +4,12 @@ import { ControlBar } from './components/ControlBar'
 import { Sidebar } from './components/Sidebar'
 import { TreemapView } from './components/TreemapView'
 import { DetailsPanel } from './components/DetailsPanel'
+import { LandingHero } from './components/LandingHero'
+import { GettingStartedPanel } from './components/GettingStartedPanel'
 import {
   ToastHost,
   ConfirmHost,
-  useToasts,
-  useConfirm
+  useToasts
 } from './components/Notices'
 import { SettingsButton, useSettings } from './components/Settings'
 
@@ -18,7 +19,6 @@ export default function App(): JSX.Element {
   const setLifecycle = useStore((s) => s.setLifecycle)
   const tree = useStore((s) => s.tree)
   const pushToast = useToasts((s) => s.push)
-  const confirm = useConfirm((s) => s.ask)
   const hydrateSettings = useSettings((s) => s.hydrate)
 
   useEffect(() => {
@@ -47,43 +47,10 @@ export default function App(): JSX.Element {
         <SettingsButton />
       </div>
       <div className="treemap-pane">
-        {tree ? (
-          <TreemapView />
-        ) : (
-          <div className="empty-state">
-            <div>No scan yet.</div>
-            <button
-              className="primary"
-              onClick={async () => {
-                const p = await window.api.pickRoot()
-                if (p) await window.api.start(p)
-              }}
-            >
-              Choose a folder to scan
-            </button>
-            <button
-              onClick={async () => {
-                const ok = await confirm({
-                  title: 'Scan the entire disk?',
-                  body:
-                    'Starts at "/". This may take a long time and requires ' +
-                    'Full Disk Access (System Settings → Privacy & Security → ' +
-                    'Full Disk Access) to see ~/Library and other protected ' +
-                    'folders. System paths and other mounted volumes are ' +
-                    'excluded automatically.',
-                  confirmLabel: 'Scan disk',
-                  cancelLabel: 'Cancel'
-                })
-                if (ok) await window.api.start('/')
-              }}
-            >
-              Scan entire disk
-            </button>
-          </div>
-        )}
+        {tree ? <TreemapView /> : <LandingHero />}
       </div>
       <div className="details">
-        <DetailsPanel />
+        {tree ? <DetailsPanel /> : <GettingStartedPanel />}
       </div>
       <ToastHost />
       <ConfirmHost />
