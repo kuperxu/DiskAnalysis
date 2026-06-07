@@ -13,7 +13,23 @@ export type FileCategory =
   | 'app'
   | 'other'
 
-export type ScanStatus = 'pending' | 'scanning' | 'done' | 'error' | 'denied'
+export type ScanStatus =
+  | 'pending'
+  | 'scanning'
+  | 'done'
+  | 'error'
+  | 'denied'
+  /** Optimistically marked for trash; user can't interact with it. */
+  | 'trashing'
+  /** Trashed successfully but kept as a tombstone in the tree (greyed-out
+   *  red) so the user can see what was removed. The node is not pruned —
+   *  it's just inert. */
+  | 'trashed'
+  /** Fully scanned (size + breakdown are accurate) but the file-level
+   *  details have been dropped because the subtree is below the user's
+   *  `expandDirThreshold` setting. The treemap renders this as a single
+   *  block; clicking it triggers a re-scan that preserves details. */
+  | 'collapsed'
 
 /** A summarized file entry kept on its parent directory. We never create a
  *  full DirNode for leaf files — there can be millions, and they don't have
@@ -43,6 +59,11 @@ export interface DirNode {
   crossDevice?: boolean
   /** Optional error message when status === 'error' or 'denied'. */
   error?: string
+  /** Names of leaf files inside this directory that are mid-trash (UI greys
+   *  them out). Cleared when the trash op completes (file is removed from
+   *  `files`) or fails (entry removed from this set). Sent over IPC as a
+   *  plain array — see serializeNode. */
+  trashingFiles?: Set<string> | string[]
 }
 
 /** A patch broadcast from main to renderer when a directory finishes scanning.
@@ -58,12 +79,42 @@ export interface TreePatch {
   ancestorBreakdownDelta?: Partial<Record<FileCategory, number>>
 }
 
+/** Per-user settings persisted to `userData/settings.json`. */
+export interface Settings {
+  /** Collapse any fully-scanned subtree whose total size is below this many
+   *  bytes. The size is *accurate* — we scan everything — but the file-level
+   *  details under collapsed nodes are dropped to keep the treemap clean and
+   *  reduce renderer memory. Clicking a collapsed node re-scans it with
+   *  details preserved. Set to 0 to disable collapsing.
+   *  Default: 100 MiB. */
+  expandDirThreshold: number
+}
+
+export const DEFAULT_SETTINGS: Settings = {
+  // 100 MiB. Stored as bytes for precision; the UI shows it in MB.
+  expandDirThreshold: 100 * 1024 * 1024
+}
+
 export type ScanLifecycle =
   | { kind: 'idle' }
   | { kind: 'scanning'; root: string; queued: number; inFlight: number }
   | { kind: 'paused'; root: string; queued: number }
   | { kind: 'done'; root: string; totalBytes: number; durationMs: number }
   | { kind: 'error'; root: string; message: string }
+
+/** A toast pushed from main → renderer. The renderer shows it in the
+ *  bottom-right corner of the window and auto-dismisses after a few seconds
+ *  (errors stick until clicked). Permission errors get a 'permission' kind
+ *  so the UI can surface a Full Disk Access hint instead of the raw errno. */
+export interface Notice {
+  kind: 'info' | 'success' | 'error' | 'permission'
+  title: string
+  body?: string
+  /** Optional path the notice is about — renderer shows it in monospace. */
+  path?: string
+  /** Stable ID so repeats coalesce. Defaults to a random uuid in main. */
+  id?: string
+}
 
 /** Channels exposed to the renderer via contextBridge. */
 export interface RendererApi {
@@ -83,11 +134,17 @@ export interface RendererApi {
    *  scans next. No-op if path already 'done' or unknown. */
   focus: (path: string) => Promise<void>
 
-  /** Move a file/dir to the system trash and prune it from the tree. */
+  /** Move a file/dir to the system trash and prune it from the tree.
+   *  Returns immediately after marking the node — actual deletion runs in
+   *  the background and lifecycle of the node updates via tree patches
+   *  (status: 'trashing' → 'trashed' or back to 'done' on failure). */
   trash: (path: string) => Promise<{ ok: true } | { ok: false; error: string }>
 
   /** Reveal the path in Finder (selects it in its parent folder). */
   reveal: (path: string) => Promise<void>
+
+  /** Open an external URL (https://, x-apple.systempreferences:, …). */
+  openExternal: (url: string) => Promise<void>
 
   /** Subscribe to incremental tree patches. Returns an unsubscribe fn. */
   onPatch: (cb: (patch: TreePatch) => void) => () => void
@@ -95,8 +152,19 @@ export interface RendererApi {
   /** Subscribe to scan lifecycle changes. Returns an unsubscribe fn. */
   onLifecycle: (cb: (s: ScanLifecycle) => void) => () => void
 
+  /** Subscribe to user-visible notices (toasts). */
+  onNotice: (cb: (n: Notice) => void) => () => void
+
   /** Get current full tree (used after the renderer (re)mounts). */
   getTree: () => Promise<DirNode | null>
+
+  /** Read the persisted settings on mount. */
+  getSettings: () => Promise<Settings>
+
+  /** Persist a new settings object; returns the merged saved value.
+   *  Side effect: certain fields (`expandDirThreshold`) re-evaluate
+   *  collapsed nodes / re-fold subtrees that crossed the threshold. */
+  setSettings: (patch: Partial<Settings>) => Promise<Settings>
 }
 
 declare global {
@@ -115,8 +183,12 @@ export const IPC = {
   focus: 'scan:focus',
   trash: 'fs:trash',
   reveal: 'fs:reveal',
+  openExternal: 'shell:openExternal',
   getTree: 'scan:getTree',
+  getSettings: 'settings:get',
+  setSettings: 'settings:set',
   // event -> renderer
   patch: 'scan:patch',
-  lifecycle: 'scan:lifecycle'
+  lifecycle: 'scan:lifecycle',
+  notice: 'app:notice'
 } as const

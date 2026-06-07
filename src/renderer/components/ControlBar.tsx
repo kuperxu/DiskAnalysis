@@ -28,16 +28,38 @@ export function ControlBar(): JSX.Element {
     }
   })()
 
+  // Pill color tracks the lifecycle. Idle/done = neutral, scanning = blue,
+  // paused = amber, error = red.
+  const statusKind = (() => {
+    switch (lifecycle.kind) {
+      case 'scanning':
+        return 'scanning'
+      case 'paused':
+        return 'paused'
+      case 'error':
+        return 'error'
+      case 'done':
+        return 'done'
+      default:
+        return 'idle'
+    }
+  })()
+
   return (
     <div className="topbar">
-      <button onClick={handlePick}>Choose folder…</button>
+      <button className="primary topbar-pick" onClick={handlePick}>
+        <span className="folder-glyph" aria-hidden="true">📁</span>
+        <span>Choose Folder…</span>
+      </button>
       <button
+        className="ghost"
         disabled={lifecycle.kind !== 'scanning'}
         onClick={() => window.api.pause()}
       >
         Pause
       </button>
       <button
+        className="ghost"
         disabled={lifecycle.kind !== 'paused'}
         onClick={() => window.api.resume()}
       >
@@ -50,7 +72,10 @@ export function ControlBar(): JSX.Element {
         onJump={setFocus}
       />
 
-      <span className="status">{statusText}</span>
+      <span className={`status-pill status-${statusKind}`} title={statusText}>
+        <span className="status-dot" aria-hidden="true" />
+        <span className="status-text">{statusText}</span>
+      </span>
     </div>
   )
 }

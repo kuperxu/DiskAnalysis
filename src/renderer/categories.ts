@@ -13,11 +13,11 @@ export const CATEGORY_COLOR: Record<FileCategory, string> = {
   audio: '#a855f7',
   archive: '#84cc16',
   code: '#22d3ee',
-  document: '#3b82f6',
+  document: '#6366f1',
   cache: '#94a3b8',
   binary: '#64748b',
   app: '#10b981',
-  other: '#cbd5e1'
+  other: '#2563eb'
 }
 
 export const CATEGORY_LABEL: Record<FileCategory, string> = {
@@ -58,4 +58,20 @@ export function dominantCategory(
     }
   }
   return best
+}
+
+/** True if a directory's status means the user can no longer interact with
+ *  it (it's mid-delete or already a tombstone). */
+export function isDirInert(status: string): boolean {
+  return status === 'trashing' || status === 'trashed'
+}
+
+/** True if a leaf file in `parentNode` is currently being trashed. */
+export function isFileTrashing(
+  trashingFiles: string[] | Set<string> | undefined,
+  fileName: string
+): boolean {
+  if (!trashingFiles) return false
+  if (Array.isArray(trashingFiles)) return trashingFiles.includes(fileName)
+  return trashingFiles.has(fileName)
 }

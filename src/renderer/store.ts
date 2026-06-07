@@ -48,15 +48,46 @@ export const useStore = create<AppState>((set, get) => ({
   setTree: (n) => set({ tree: n, focusPath: n?.path ?? null, selectedPath: null }),
   setFocus: (p) => set({ focusPath: p, selectedPath: null }),
   setSelected: (p) => set({ selectedPath: p }),
-  setLifecycle: (s) => set({ lifecycle: s }),
+  setLifecycle: (s) =>
+    set((state) =>
+      produce(state, (draft) => {
+        // When the scan root changes, reset the tree proactively. This stops
+        // late patches from a previous scan flickering the UI; they'll be
+        // dropped by the isInsideCurrent guard in applyPatch.
+        const lifecycleRoot =
+          s.kind === 'scanning' || s.kind === 'paused' || s.kind === 'done' || s.kind === 'error'
+            ? s.root
+            : null
+        if (lifecycleRoot && draft.tree && draft.tree.path !== lifecycleRoot) {
+          draft.tree = blankNode(lifecycleRoot)
+          draft.focusPath = lifecycleRoot
+          draft.selectedPath = null
+        }
+        draft.lifecycle = s
+      })
+    ),
 
   applyPatch: (patch) =>
     set((state) =>
       produce(state, (draft) => {
-        if (!draft.tree) {
-          // First patch from a fresh scan: synthesize the root.
-          draft.tree = blankNode(patch.path)
-          draft.focusPath = draft.tree.path
+        // A patch whose path is NOT inside the current tree means a brand-new
+        // scan started (user picked a different folder, or it's the very first
+        // scan). Reset the tree to a fresh root before applying.
+        // Without this guard the renderer silently drops patches from new
+        // scans and the UI looks frozen on the previous folder.
+        const currentRoot = draft.tree?.path
+        const isInsideCurrent =
+          !!currentRoot &&
+          (patch.path === currentRoot || patch.path.startsWith(currentRoot + '/'))
+        if (!draft.tree || !isInsideCurrent) {
+          // The first patch from a fresh scan is always for the root itself.
+          // If it's something deeper (unlikely but possible if events arrive
+          // out of order across IPC), synthesize the deepest common prefix
+          // we can — for now: use the root of the patch path as the new tree.
+          const newRoot = inferRoot(patch.path)
+          draft.tree = blankNode(newRoot)
+          draft.focusPath = newRoot
+          draft.selectedPath = null
         }
         const target = locate(draft.tree!, patch.path)
         if (!target) return
@@ -69,6 +100,7 @@ export const useStore = create<AppState>((set, get) => ({
         target.breakdown = patch.node.breakdown
         target.error = patch.node.error
         target.crossDevice = patch.node.crossDevice
+        target.trashingFiles = patch.node.trashingFiles
 
         // Merge children stubs: for any new child not already in target,
         // create it; for existing ones, update size/status only (don't
@@ -114,4 +146,13 @@ function locate(root: DirNode, target: string): DirNode | null {
     cur = next
   }
   return cur
+}
+
+/** When the renderer is freshly mounted and a patch arrives for a path it
+ *  doesn't know about, we have to invent a root. For the first patch of any
+ *  scan this is always the root path itself (controller sends it that way),
+ *  so identity is the right answer. Kept as a helper for the rare case of
+ *  out-of-order delivery — falls back to the patch path. */
+function inferRoot(patchPath: string): string {
+  return patchPath
 }
